@@ -1,2 +1,25 @@
-venv/
+# Python
 __pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+venv/
+
+# Environment variables / secrets
+.env
+.env.*
+
+# SQLite databases
+*.db
+
+# Flask
+instance/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/

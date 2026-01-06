@@ -6,8 +6,30 @@
     <title>ASU Schedules — MVP</title>
   </head>
   <body>
-    <h1>ASU Schedules</h1>
-    <p>here you fucking go samantha.</p>
-    <h6>i know you're touching oliver</h6>
+    <h1>ASU Schedules — MVP</h1>
+
+    <form action="/" method="get">
+      <label for="section">Class section id (numbers):</label>
+      <input id="section" name="section" placeholder="e.g., 19134" value="{{ query or '' }}" />
+      <button type="submit">Search</button>
+    </form>
+
+    {% if result is not none %}
+      {% if result.error %}
+        <p><strong>Error:</strong> {{ result.error }}</p>
+      {% elif result == none %}
+        <p>No class found for section {{ query }}</p>
+      {% else %}
+        <h2>{{ result.title }} — {{ result.subject }} {{ result.catalog_nbr }}</h2>
+        <p><strong>Section:</strong> {{ result.class_number }}</p>
+        <p><strong>Instructors:</strong> {{ result.instructors }}</p>
+        <p><strong>Location:</strong> {{ result.location }}</p>
+        <p><strong>Meeting times:</strong> {{ result.meeting_times }}</p>
+        <p><strong>Enrolled:</strong> {{ result.enrolled }} / {{ result.capacity }}</p>
+        <h3>Raw data (debug)</h3>
+        <pre>{{ result.raw | tojson(indent=2) }}</pre>
+      {% endif %}
+    {% endif %}
+
   </body>
 </html>
