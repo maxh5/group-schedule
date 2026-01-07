@@ -1,0 +1,392 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Group Schedule — Gradient Heatmap Prototype</title>
+  <style>
+    :root{--bg:#071126;--card:#071726;--muted:#9fb0c9;--accent:#06b6d4;--glass:rgba(255,255,255,0.03)}
+    html,body{height:100%;margin:0;font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;background:linear-gradient(180deg,#06101a 0%, #071525 100%);color:#e9f6ff}
+    .wrap{max-width:1200px;margin:28px auto;padding:22px;border-radius:12px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));box-shadow:0 8px 40px rgba(2,6,23,0.7)}
+    header{display:flex;justify-content:space-between;align-items:center;gap:16px}
+    h1{margin:0;font-size:20px}
+    .lead{color:var(--muted);font-size:13px;margin:4px 0 0}
+
+    /* Controls */
+    .controls{display:flex;gap:10px;flex-wrap:wrap;margin:14px 0}
+    .control{background:var(--glass);padding:10px;border-radius:10px;display:flex;align-items:center;gap:8px}
+    label{font-size:13px;color:var(--muted)}
+    input[type=range]{accent-color:var(--accent)}
+    button{background:linear-gradient(90deg,#10b981,#06b6d4);border:0;padding:8px 14px;border-radius:8px;font-weight:700;color:#012;cursor:pointer}
+    button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--muted)}
+
+    /* Layout */
+    .stage{display:grid;grid-template-columns:80px 1fr;gap:16px;align-items:start}
+    .times{padding-top:12px;color:var(--muted);font-size:13px}
+    .canvas-wrap{background:linear-gradient(180deg,rgba(255,255,255,0.01),transparent);padding:12px;border-radius:10px;overflow:auto}
+
+    /* Legend & panels */
+    .legend{display:flex;align-items:center;gap:14px;margin-top:10px}
+    .legend-scale{height:14px;border-radius:8px;background:linear-gradient(90deg,#2dd4bf,#f6e05e,#fb7185);width:280px;border:1px solid rgba(255,255,255,0.04)}
+    .panels{display:flex;gap:12px;margin-top:12px;flex-wrap:wrap}
+    .panel{background:var(--glass);padding:14px;border-radius:10px;min-width:220px}
+
+    .best-list{list-style:none;padding:0;margin:0}
+    .best-list li{padding:8px 0;border-bottom:1px dashed rgba(255,255,255,0.02);display:flex;justify-content:space-between;gap:8px}
+
+    .tooltip{position:fixed;pointer-events:none;padding:8px 10px;background:#031425;color:#e9fff6;border-radius:8px;font-size:13px;border:1px solid rgba(255,255,255,0.04);display:none;z-index:50}
+
+    footer{color:var(--muted);font-size:13px;margin-top:16px}
+
+    @media (max-width:920px){.stage{grid-template-columns:72px 1fr}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Gradient Heatmap — Find the Least Busy Times</h1>
+        <p class="lead">A continuous gradient shows how busy each minute of the week is — green = most free, red = most busy. Use samples or your simulated groups below.</p>
+      </div>
+      <div style="text-align:right"><span style="background:rgba(0,0,0,0.2);padding:6px 10px;border-radius:999px;font-weight:700">Prototype</span></div>
+    </header>
+
+    <div class="controls" aria-hidden="false">
+      <div class="control"><label>Participants</label><input id="participants" type="range" min="5" max="200" value="60" style="width:160px"/><div id="pcount" style="color:var(--muted);font-weight:700;width:36px;text-align:center">60</div></div>
+      <div class="control"><label>Resolution</label><select id="resolution"><option value="1">1 min</option><option value="5" selected>5 min</option><option value="15">15 min</option></select></div>
+      <div class="control"><label>Meeting len</label><select id="meetingLen"><option value="30">30m</option><option value="60" selected>60m</option><option value="90">90m</option><option value="120">120m</option></select></div>
+      <div class="control"><label>Hours</label><input id="startHour" type="number" value="7" style="width:58px"/> — <input id="endHour" type="number" value="21" style="width:58px"/></div>
+      <div class="control" style="margin-left:auto"><button id="generate">Generate Sample</button><button class="ghost" id="clear">Clear</button></div>
+    </div>
+
+    <div class="stage">
+      <div class="times" id="timeLabels"></div>
+
+      <div class="canvas-wrap">
+        <canvas id="heatmap"></canvas>
+        <div class="legend"><div class="legend-scale" aria-hidden="true"></div><div style="color:var(--muted);font-size:13px">Free → Busy</div></div>
+      </div>
+    </div>
+
+    <div class="panels">
+      <div class="panel" style="flex:1">
+        <h3 style="margin:0 0 8px">Top recommended windows</h3>
+        <ul class="best-list" id="bestList"></ul>
+      </div>
+
+      <div class="panel" style="width:320px">
+        <h3 style="margin:0 0 8px">Interaction tips</h3>
+        <ol style="margin:0;color:var(--muted);padding-left:16px">
+          <li>Hover to inspect a minute (see percent busy).</li>
+          <li>Click-drag on the heatmap to select a window and see its average occupancy.</li>
+          <li>Use <strong>Generate Sample</strong> to simulate realistic schedules.</li>
+        </ol>
+      </div>
+    </div>
+
+    <footer>Designed for fast visual decisions — no live data required.</footer>
+  </div>
+
+  <div id="tooltip" class="tooltip"></div>
+
+  <script>
+    // UX helpers --------------------------------------------
+    const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+    const participantsInput = document.getElementById('participants');
+    const pcount = document.getElementById('pcount');
+    pcount.textContent = participantsInput.value;
+    participantsInput.addEventListener('input', ()=> pcount.textContent = participantsInput.value);
+
+    const resolutionInput = document.getElementById('resolution');
+    const meetingLenSelect = document.getElementById('meetingLen');
+    const startHourInput = document.getElementById('startHour');
+    const endHourInput = document.getElementById('endHour');
+    const generateBtn = document.getElementById('generate');
+    const clearBtn = document.getElementById('clear');
+    const bestList = document.getElementById('bestList');
+
+    // Canvas & state ----------------------------------------
+    const canvas = document.getElementById('heatmap');
+    const tooltip = document.getElementById('tooltip');
+    let ctx, DPR = Math.max(1, window.devicePixelRatio || 1);
+
+    const state = {
+      startHour: +startHourInput.value || 7,
+      endHour: +endHourInput.value || 21,
+      resolution: +resolutionInput.value,
+      participants: +participantsInput.value,
+      totalMinutes: 0,
+      minutesPerPixel: 1,
+      data: [], // people schedule blocks
+      busyCounts: null, // busyCounts[day][minuteIndex]
+      columnWidth: 140,
+      gap: 12,
+      highlightRects: []
+    };
+
+    // responsive canvas size --------------------------------
+    function resizeCanvas(){
+      state.resolution = +resolutionInput.value;
+      state.startHour = Math.max(0,Math.min(23,+startHourInput.value));
+      state.endHour = Math.max(state.startHour+1,Math.min(24,+endHourInput.value));
+      state.totalMinutes = (state.endHour - state.startHour)*60;
+      // we draw each unit as: one vertical pixel per resolution step (or more for readability)
+      const steps = Math.ceil(state.totalMinutes / state.resolution);
+      const height = Math.max(steps, 240); // minimum visual height
+      const width = state.columnWidth*7 + state.gap*6;
+
+      canvas.width = Math.round(width * DPR);
+      canvas.height = Math.round(height * DPR);
+      canvas.style.width = width+'px';
+      canvas.style.height = height+'px';
+      ctx = canvas.getContext('2d');
+      ctx.setTransform(DPR,0,0,DPR,0,0);
+
+      // redraw axes and heatmap if we have data
+      drawBackground();
+      if(state.busyCounts) renderHeatmap();
+      renderTimeLabels();
+    }
+
+    function renderTimeLabels(){
+      const container = document.getElementById('timeLabels');
+      container.innerHTML = '';
+      const steps = Math.ceil(state.totalMinutes / state.resolution);
+      for(let i=0;i<steps;i+=Math.max(1, Math.floor(60/state.resolution))) {
+        const mins = state.startHour*60 + i*state.resolution;
+        const hh = Math.floor(mins/60).toString().padStart(2,'0'); const mm = String(mins%60).padStart(2,'0');
+        const div = document.createElement('div'); div.style.height = (Math.round(canvas.height/DPR * (Math.max(1, Math.floor(60/state.resolution))/steps)))+'px'; div.style.lineHeight = div.style.height; div.textContent = `${hh}:${mm}`; div.style.textAlign='right'; div.style.paddingRight='8px'; div.style.color='var(--muted)'; container.appendChild(div);
+      }
+    }
+
+    // color mapping (continuous gradient) --------------------
+    // 0.0 -> green-teal, 0.5 -> yellow, 1.0 -> red
+    function colorForRatio(r){
+      r = Math.max(0, Math.min(1, r));
+      // Interpolate through three stops for good perceptual mapping
+      if(r < 0.5){
+        // green -> yellow
+        const t = r/0.5;
+        return lerpColor([45,200,170], [246,224,94], t);
+      } else {
+        const t = (r-0.5)/0.5;
+        return lerpColor([246,224,94], [251,113,133], t);
+      }
+    }
+    function lerpColor(aRGB, bRGB, t){
+      const r = Math.round(aRGB[0] + (bRGB[0]-aRGB[0])*t);
+      const g = Math.round(aRGB[1] + (bRGB[1]-aRGB[1])*t);
+      const b = Math.round(aRGB[2] + (bRGB[2]-aRGB[2])*t);
+      return `rgb(${r},${g},${b})`;
+    }
+
+    function drawBackground(){
+      ctx.clearRect(0,0,canvas.width/DPR,canvas.height/DPR);
+      // draw columns separation and hour lines
+      const steps = Math.ceil(state.totalMinutes / state.resolution);
+      const colW = state.columnWidth; const h = canvas.height/DPR;
+      for(let d=0; d<7; d++){
+        const x = d*(colW+state.gap);
+        ctx.fillStyle = 'rgba(255,255,255,0.02)';
+        ctx.fillRect(x,0,1,h);
+      }
+      // horizontal grid lines for hours
+      const pixelsPerStep = (canvas.height/DPR)/steps;
+      for(let m=0; m<=state.totalMinutes; m+=60){
+        const y = (m/state.resolution)*pixelsPerStep;
+        ctx.strokeStyle = 'rgba(255,255,255,0.03)'; ctx.lineWidth=1;
+        ctx.beginPath(); ctx.moveTo(0, Math.round(y)+0.5); ctx.lineTo(canvas.width/DPR, Math.round(y)+0.5); ctx.stroke();
+      }
+    }
+
+    // sample generator (produces state.busyCounts) ------------
+    function generateSample(N){
+      state.participants = N;
+      // generate N people with 1-4 blocks (mostly weekdays)
+      const people = [];
+      for(let i=0;i<N;i++){
+        const blocks = Math.floor(Math.random()*3)+1;
+        const blocksArr = [];
+        for(let b=0;b<blocks;b++){
+          const day = Math.floor(Math.random()*5);
+          const start = (Math.random()*(state.endHour-state.startHour-1)) + state.startHour + Math.random()*0.6;
+          const dur = (Math.floor(Math.random()*3)+1); // 1-3 hours
+          blocksArr.push({day, start: Math.max(state.startHour, start), end: Math.min(state.endHour, start+dur)});
+        }
+        people.push({id:`p${i}`, blocks: blocksArr});
+      }
+      state.data = people;
+      computeBusyCounts();
+    }
+
+    function computeBusyCounts(){
+      const steps = Math.ceil(state.totalMinutes / state.resolution);
+      const counts = Array.from({length:7}, ()=> new Uint16Array(steps));
+      for(const p of state.data){
+        for(const b of p.blocks){
+          const from = Math.max(0, Math.floor(((b.start*60) - state.startHour*60)/state.resolution));
+          const to = Math.min(steps, Math.ceil(((b.end*60) - state.startHour*60)/state.resolution));
+          for(let i=from;i<to;i++) counts[b.day][i]++;
+        }
+      }
+      state.busyCounts = counts;
+      renderHeatmap();
+    }
+
+    function renderHeatmap(){
+      drawBackground();
+      const steps = Math.ceil(state.totalMinutes / state.resolution);
+      const colW = state.columnWidth; const h = canvas.height/DPR;
+      const pixelsPerStep = h / steps;
+      // draw each day's column by painting rectangles per step using continuous color
+      for(let d=0; d<7; d++){
+        const x = Math.round(d*(colW+state.gap));
+        for(let s=0; s<steps; s++){
+          const val = state.busyCounts[d][s] || 0;
+          const ratio = val / Math.max(1, state.participants);
+          ctx.fillStyle = colorForRatio(ratio);
+          const y = s * pixelsPerStep;
+          ctx.fillRect(x, Math.round(y), colW, Math.max(1, Math.ceil(pixelsPerStep)));
+        }
+      }
+      // overlay small labels for days at top
+      ctx.fillStyle = 'rgba(255,255,255,0.92)'; ctx.font='600 13px Inter, system-ui';
+      for(let d=0; d<7; d++){ const x = Math.round(d*(colW+state.gap))+6; ctx.fillText(days[d], x, 14); }
+      // draw any highlight rectangles (best windows)
+      drawHighlights();
+    }
+
+    // interactive hover & selection ---------------------------
+    let isDragging=false, dragStart=null;
+    canvas.addEventListener('mousemove', (ev)=>{
+      const r = canvas.getBoundingClientRect();
+      const x = (ev.clientX - r.left); const y = (ev.clientY - r.top);
+      const info = hitTest(x,y);
+      if(info){
+        showTooltip(`${info.dayName} ${info.timeLabel}<br><strong>${info.busy} busy</strong> — ${Math.round(info.pct)}%`, ev.clientX+12, ev.clientY+12);
+      } else hideTooltip();
+      if(isDragging){
+        dragCurrent = {x,y}; drawDrag();
+      }
+    });
+    canvas.addEventListener('mouseleave', ()=>{ hideTooltip(); if(isDragging){isDragging=false; dragStart=null; renderHeatmap(); }});
+    canvas.addEventListener('mousedown', (ev)=>{
+      const r = canvas.getBoundingClientRect(); dragStart = {x: ev.clientX - r.left, y: ev.clientY - r.top}; isDragging=true; dragCurrent = {...dragStart};
+    });
+    canvas.addEventListener('mouseup', (ev)=>{
+      if(!isDragging) return; isDragging=false; const r = canvas.getBoundingClientRect(); dragCurrent = {x: ev.clientX - r.left, y: ev.clientY - r.top}; finalizeSelection(); dragStart=null;
+    });
+
+    function drawDrag(){
+      renderHeatmap();
+      if(!dragStart || !dragCurrent) return;
+      const x0 = Math.min(dragStart.x, dragCurrent.x), x1 = Math.max(dragStart.x, dragCurrent.x);
+      const y0 = Math.min(dragStart.y, dragCurrent.y), y1 = Math.max(dragStart.y, dragCurrent.y);
+      ctx.fillStyle = 'rgba(6,182,212,0.12)'; ctx.fillRect(x0, y0, x1-x0, y1-y0);
+      ctx.strokeStyle = 'rgba(6,182,212,0.6)'; ctx.lineWidth = 2; ctx.strokeRect(x0+0.5, y0+0.5, x1-x0, y1-y0);
+    }
+
+    function finalizeSelection(){
+      // compute average busy and show in side panel
+      const sel = normalizeRect(dragStart, dragCurrent);
+      if(!sel) return;
+      const data = aggregateRect(sel);
+      showSelectionResult(data, sel);
+      // keep highlight until next render
+      state.highlightRects = [sel]; drawHighlights();
+    }
+
+    function normalizeRect(a,b){
+      if(!a||!b) return null; const x0=Math.max(0, Math.min(a.x,b.x)), x1=Math.min(canvas.width/DPR, Math.max(a.x,b.x)); const y0=Math.max(0, Math.min(a.y,b.y)), y1=Math.min(canvas.height/DPR, Math.max(a.y,b.y)); if(x1<=x0 || y1<=y0) return null; return {x:x0,y:y0,w:x1-x0,h:y1-y0}; }
+
+    function drawHighlights(){
+      for(const r of (state.highlightRects||[])){
+        ctx.fillStyle = 'rgba(12,54,66,0.22)'; ctx.fillRect(r.x, r.y, r.w, r.h);
+        ctx.strokeStyle = 'rgba(255,255,255,0.09)'; ctx.lineWidth = 2; ctx.strokeRect(r.x+0.5, r.y+0.5, r.w, r.h);
+      }
+    }
+
+    function aggregateRect(rect){
+      const steps = Math.ceil(state.totalMinutes / state.resolution);
+      const pixelsPerStep = (canvas.height/DPR)/steps; const colW = state.columnWidth, gap=state.gap;
+      const day0 = Math.floor(rect.x / (colW+gap)); const day1 = Math.floor((rect.x+rect.w) / (colW+gap));
+      const startStep = Math.floor(rect.y / pixelsPerStep); const endStep = Math.ceil((rect.y+rect.h) / pixelsPerStep);
+      let total=0, cells=0; const breakdown={};
+      for(let d=day0; d<=day1 && d<7; d++){
+        for(let s=startStep; s<endStep && s<steps; s++){
+          const val = state.busyCounts?.[d]?.[s] || 0; total += val; cells++; }
+      }
+      return {total, cells, avg: cells? (total/cells):0, dayRange:[day0,Math.min(day1,6)], startStep, endStep};
+    }
+
+    function showSelectionResult(data,rect){
+      // show in bestList for quick feedback
+      const div = bestList; div.innerHTML='';
+      const li = document.createElement('li'); li.innerHTML = `<div><strong>Selection</strong><div style="color:var(--muted);font-size:13px;margin-top:4px">Avg busy: ${Math.round(data.avg)} / ${state.participants} (${Math.round(data.avg/state.participants*100)}%)</div></div><div style="color:var(--muted);font-size:13px">${days[data.dayRange[0]]}${data.dayRange[0]!==data.dayRange[1]?'–'+days[data.dayRange[1]]:''}</div>`; div.appendChild(li);
+    }
+
+    function hitTest(x,y){
+      const steps = Math.ceil(state.totalMinutes / state.resolution);
+      const pixelsPerStep = (canvas.height/DPR)/steps;
+      const colW = state.columnWidth, gap=state.gap;
+      const day = Math.floor(x / (colW+gap)); if(day<0||day>6) return null;
+      const step = Math.min(steps-1, Math.floor(y / pixelsPerStep));
+      const minutes = state.startHour*60 + step*state.resolution;
+      const hh = Math.floor(minutes/60).toString().padStart(2,'0'); const mm = String(minutes%60).padStart(2,'0');
+      const busy = state.busyCounts?.[day]?.[step] || 0; const pct = (busy/state.participants)*100;
+      return {day, dayName: days[day], step, busy, pct, timeLabel: `${hh}:${mm}`};
+    }
+
+    function showTooltip(html,x,y){ tooltip.style.left = (x)+'px'; tooltip.style.top=(y)+'px'; tooltip.innerHTML = html; tooltip.style.display='block'; }
+    function hideTooltip(){ tooltip.style.display='none'; }
+
+    // analysis: find best sliding windows ----------------------
+    function findBestWindows(){
+      if(!state.busyCounts) return;
+      const duration = +meetingLenSelect.value; const stepsWindow = Math.ceil(duration / state.resolution);
+      const steps = Math.ceil(state.totalMinutes / state.resolution);
+      const scores = [];
+      for(let d=0;d<7;d++){
+        for(let s=0;s+stepsWindow<=steps;s++){
+          let sum=0; for(let k=0;k<stepsWindow;k++) sum += state.busyCounts[d][s+k] || 0;
+          scores.push({day:d,start:s,avg: sum/stepsWindow});
+        }
+      }
+      scores.sort((a,b)=>a.avg-b.avg);
+      const top = scores.slice(0,6);
+      bestList.innerHTML=''; state.highlightRects = [];
+      top.forEach((it,idx)=>{
+        const startMin = state.startHour*60 + it.start*state.resolution; const endMin = startMin + duration;
+        const label = `${days[it.day]} ${formatTime(startMin)}—${formatTime(endMin)}`;
+        const li = document.createElement('li'); li.innerHTML = `<span><strong>${label}</strong><div style="color:var(--muted);font-size:13px">Avg busy ${Math.round(it.avg)} / ${state.participants} (${Math.round(it.avg/state.participants*100)}%)</div></span><span style="color:var(--muted)">${idx+1}</span>`;
+        li.addEventListener('click', ()=>{ highlightWindow(it.day, it.start, stepsWindow); });
+        bestList.appendChild(li);
+        // add highlight rect for visualization
+        const pixelsPerStep = (canvas.height/DPR)/steps; const x = Math.round(it.day*(state.columnWidth+state.gap)); const y = it.start*pixelsPerStep; state.highlightRects.push({x,y,w:state.columnWidth,h:stepsWindow*pixelsPerStep});
+      });
+      renderHeatmap();
+    }
+
+    function highlightWindow(day,start,stepsWindow){ state.highlightRects = []; const pixelsPerStep = (canvas.height/DPR)/Math.ceil(state.totalMinutes/state.resolution); const x = Math.round(day*(state.columnWidth+state.gap)); const y = start*pixelsPerStep; state.highlightRects.push({x,y,w:state.columnWidth,h:stepsWindow*pixelsPerStep}); renderHeatmap(); }
+
+    function formatTime(mins){ const hh = Math.floor(mins/60)%24; const mm = mins%60; return `${String(hh).padStart(2,'0')}:${String(mm).padStart(2,'0')}` }
+
+    // helpers & wiring ---------------------------------------
+    function clearData(){ state.data=[]; state.busyCounts=null; bestList.innerHTML=''; state.highlightRects=[]; renderHeatmap(); }
+
+    // events
+    resolutionInput.addEventListener('change', ()=>{ resizeCanvas(); });
+    startHourInput.addEventListener('change', ()=>{ resizeCanvas(); });
+    endHourInput.addEventListener('change', ()=>{ resizeCanvas(); });
+    participantsInput.addEventListener('change', ()=>{ state.participants = +participantsInput.value; if(state.busyCounts) renderHeatmap(); });
+    generateBtn.addEventListener('click', ()=>{ generateSample(+participantsInput.value); });
+    clearBtn.addEventListener('click', ()=>{ clearData(); });
+    document.getElementById('meetingLen').addEventListener('change', ()=>{ findBestWindows(); });
+
+    // initial setup & demo
+    resizeCanvas();
+    // create an initial realistic demo automatically
+    setTimeout(()=>{ generateSample(state.participants); findBestWindows(); }, 220);
+  </script>
+</body>
+</html>

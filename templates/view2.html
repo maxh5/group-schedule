@@ -1,0 +1,350 @@
+<!-- group_calendar_design.html
+
+Second iteration: optimised for 10+ people, wider calendar, richer JS interactions.
+
+Key changes from prior version:
+- Availability shown as an occupancy heatmap per time cell (0..N busy) with numeric overlay
+- Hover or click a cell opens a popover listing who is busy (name + short class), with avatars and small motion
+- Calendar width increased by reducing side gutters and making time column thinner
+- Compact person legend and per-person filter (toggle) remaining but now supports many people via a searchable list
+- Uses CSS transitions and small JS for animated heat updates and popover positioning
+
+Notes:
+- Replace the sample `.busy` data with server-rendered occupancy arrays: each cell contains an integer busy_count and a list of busy_people (name + course)
+- The template should inject `people` (array) and `grid` (2D structure) for real data.
+
+-->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Group Availability — Dense View</title>
+  <style>
+    :root{
+      --bg:#f4f6fb;
+      --card:#ffffff;
+      --muted:#6b7280;
+      --accent:linear-gradient(135deg,#6ee7b7,#60a5fa);
+      --slot-height:44px; /* per hour slot height */
+      --grid-gap:6px;
+      --time-col-width:56px; /* narrowed */
+      --max-hours:12; /* for 8:00-20:00 */
+      --max-people:12; /* expected concurrency for heat scaling */
+      --font-sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    }
+    *{box-sizing:border-box}
+    body{font-family:var(--font-sans);background:var(--bg);margin:0;color:#0f172a}
+    .wrap{max-width:1280px;margin:18px auto;padding:12px}
+
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+    .brand{display:flex;align-items:center;gap:12px}
+    .logo{width:44px;height:44px;border-radius:10px;background:linear-gradient(135deg,#7c3aed,#06b6d4);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700}
+    h1{font-size:18px;margin:0}
+    .profile{font-size:13px;color:var(--muted)}
+
+    .controls{display:flex;gap:12px;align-items:center;margin-bottom:12px}
+    .people-panel{display:flex;gap:8px;align-items:center}
+    .person-toggle{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;background:var(--card);cursor:pointer;border:1px solid rgba(15,23,42,0.04)}
+    .person-toggle .sw{width:12px;height:12px;border-radius:3px}
+    .people-dropdown{position:relative}
+    .people-list{position:absolute;top:36px;left:0;background:var(--card);padding:8px;border-radius:8px;max-height:260px;overflow:auto;width:260px;box-shadow:0 10px 30px rgba(2,6,23,0.08);display:none}
+    .people-list.show{display:block}
+    .people-list .item{display:flex;align-items:center;gap:8px;padding:6px;border-radius:6px}
+    .people-list input{margin-right:8px}
+
+    .actions{margin-left:auto;display:flex;gap:8px}
+    button{padding:8px 12px;border-radius:8px;border:1px solid rgba(2,6,23,0.06);background:#fff;cursor:pointer}
+
+    .main{display:grid;grid-template-columns: 1fr 320px;gap:14px}
+
+    .calendar-card{background:var(--card);border-radius:12px;padding:12px;box-shadow:0 8px 34px rgba(2,6,23,0.06)}
+    .calendar-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+    .calendar-header h2{margin:0;font-size:15px}
+    .calendar-grid{display:grid;grid-template-columns:var(--time-col-width) repeat(5,1fr);gap:8px}
+
+    .time-col{display:flex;flex-direction:column;gap:var(--grid-gap);padding-top:36px}
+    .time-cell{height:var(--slot-height);display:flex;align-items:center;color:var(--muted);font-size:12px;padding-left:8px}
+
+    .day-col{position:relative;padding:6px 0}
+    .day-label{height:36px;display:flex;align-items:center;justify-content:center;font-weight:700;color:#0f172a}
+
+    /* each grid cell is a heat tile container */
+    .cell{height:var(--slot-height);border-radius:8px;margin-bottom:var(--grid-gap);background:transparent;position:relative;overflow:visible}
+    .cell-inner{position:relative;height:100%;border-radius:8px;padding:0 6px;display:flex;align-items:center}
+
+    /* occupancy bar: gradient from light gray -> color to show busy density */
+    .occupancy{position:absolute;inset:2px;border-radius:7px;transition:background 350ms ease, transform 250ms ease;display:flex;align-items:center}
+    .occupancy .count{margin-left:auto;padding-right:8px;font-weight:700;color:rgba(255,255,255,0.95);font-size:12px}
+
+    /* heat mapping function via rgba overlay based on percentage -- JS will compute color */
+
+    /* small marker row for many people (tiny circular avatars) */
+    .marker-row{position:absolute;right:6px;bottom:4px;display:flex;gap:4px}
+    .marker{width:10px;height:10px;border-radius:50%;border:1px solid rgba(255,255,255,0.6);box-shadow:0 1px 2px rgba(2,6,23,0.12)}
+
+    /* sidebar */
+    .sidebar{background:var(--card);border-radius:12px;padding:12px;box-shadow:0 8px 34px rgba(2,6,23,0.06)}
+    .next-times h3{margin:0 0 8px 0;font-size:15px}
+    .next-times ul{margin:0;padding-left:18px;color:var(--muted)}
+    .legend{margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .legend-item{display:flex;align-items:center;gap:8px}
+
+    /* popover */
+    .popover{position:absolute;background:#fff;padding:10px;border-radius:10px;box-shadow:0 10px 40px rgba(2,6,23,0.12);min-width:220px;z-index:60;transform-origin:top center;opacity:0;pointer-events:none;transition:opacity 180ms ease, transform 180ms ease}
+    .popover.show{opacity:1;pointer-events:auto;transform:translateY(-6px) scale(1)}
+    .popover h4{margin:0 0 6px 0;font-size:13px}
+    .popover .row{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px dashed rgba(15,23,42,0.04)}
+    .popover .row:last-child{border-bottom:0}
+    .avatar{width:28px;height:28px;border-radius:6px;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700}
+
+    /* helper */
+    .muted{color:var(--muted);font-size:13px}
+
+    @media (max-width:980px){
+      .main{grid-template-columns:1fr;}
+      .people-list{display:none}
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <div class="logo">AS</div>
+        <div>
+          <h1>ASU Meetups</h1>
+          <div class="profile">Group availability — dense view</div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button onclick="location.href='#'">+ Add Class</button>
+        <button onclick="location.href='#'">+ Plan Event</button>
+      </div>
+    </header>
+
+    <div class="controls">
+      <div class="people-panel">
+        <div style="font-weight:700;color:#0f172a">People</div>
+        <div class="people-dropdown">
+          <div class="person-toggle" id="toggle-people">Show / Hide people ▾</div>
+          <div class="people-list" id="people-list">
+            <!-- Example person items. Replace server-side. -->
+            <label class="item"><input type="checkbox" data-id="alice" checked> <span class="sw" style="background:linear-gradient(180deg,#60a5fa,#3b82f6)"></span> Alice</label>
+            <label class="item"><input type="checkbox" data-id="ben" checked> <span class="sw" style="background:linear-gradient(180deg,#34d399,#10b981)"></span> Ben</label>
+            <label class="item"><input type="checkbox" data-id="you" checked> <span class="sw" style="background:linear-gradient(180deg,#c084fc,#7c3aed)"></span> You</label>
+            <!-- Add many more rows as needed -->
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="main">
+      <div class="calendar-card">
+        <div class="calendar-header">
+          <h2>Weekly availability</h2>
+          <div class="muted">Week of <strong>Mon Jan 12</strong></div>
+        </div>
+
+        <div class="calendar-grid" id="calendar-grid">
+          <div></div>
+          <div class="day-label">Mon</div>
+          <div class="day-label">Tue</div>
+          <div class="day-label">Wed</div>
+          <div class="day-label">Thu</div>
+          <div class="day-label">Fri</div>
+
+          <!-- Time column -->
+          <div class="time-col">
+            <div class="time-cell">8:00</div>
+            <div class="time-cell">9:00</div>
+            <div class="time-cell">10:00</div>
+            <div class="time-cell">11:00</div>
+            <div class="time-cell">12:00</div>
+            <div class="time-cell">13:00</div>
+            <div class="time-cell">14:00</div>
+            <div class="time-cell">15:00</div>
+            <div class="time-cell">16:00</div>
+            <div class="time-cell">17:00</div>
+            <div class="time-cell">18:00</div>
+            <div class="time-cell">19:00</div>
+          </div>
+
+          <!-- For demo: generate 5 * 12 cells + data attributes -->
+          <!-- In production, render server-side with data-busy and data-people attributes -->
+
+          <!-- We'll programmatically fill day columns with cells -->
+        </div>
+      </div>
+
+      <aside class="sidebar">
+        <div class="next-times">
+          <h3>Next best times</h3>
+          <ul id="best-times">
+            <li>Today 12:00–13:00 (everyone free)</li>
+            <li>Thu 15:00–16:00 (all but Ben)</li>
+            <li>Fri 18:30–19:30 (good for evenings)</li>
+          </ul>
+        </div>
+
+        <div class="legend">
+          <!-- Small legend grid -->
+          <div class="legend-item"><div class="avatar" style="background:linear-gradient(180deg,#60a5fa,#3b82f6)">A</div><div>Alice</div></div>
+          <div class="legend-item"><div class="avatar" style="background:linear-gradient(180deg,#34d399,#10b981)">B</div><div>Ben</div></div>
+          <div class="legend-item"><div class="avatar" style="background:linear-gradient(180deg,#c084fc,#7c3aed)">Y</div><div>You</div></div>
+        </div>
+
+      </aside>
+    </div>
+  </div>
+
+  <div id="popover" class="popover" role="dialog" aria-hidden="true"> <!-- reused popover -->
+    <h4 id="popover-title">Busy</h4>
+    <div id="popover-list"></div>
+  </div>
+
+  <script>
+    /***********************
+     * Demo data generator
+     * In your Flask template, you should render a JSON blob with the real grid.
+     * grid[day][hour] => { busyCount:int, people:[{id,name,color,course}] }
+     ***********************/
+    const PEOPLE = [
+      {id:'alice',name:'Alice',color:['#60a5fa','#3b82f6']},
+      {id:'ben',name:'Ben',color:['#34d399','#10b981']},
+      {id:'you',name:'You',color:['#c084fc','#7c3aed']},
+      {id:'sam',name:'Sam',color:['#fb7185','#ef4444']},
+      {id:'mia',name:'Mia',color:['#f59e0b','#f97316']},
+      {id:'lee',name:'Lee',color:['#60a5fa','#2563eb']}
+    ];
+
+    // make a sample grid with pseudo-random busy people
+    const DAYS = 5, HOURS = 12;
+    const grid = Array.from({length:DAYS},()=>Array.from({length:HOURS},()=>({busyCount:0,people:[]})));
+    function samplePopulate(){
+      // random blocks for demo
+      for(let d=0;d<DAYS;d++){
+        for(let h=0;h<HOURS;h++){
+          const r = Math.random();
+          if(r>0.65){
+            const k = Math.floor(Math.random()*3)+1; // 1..3 people busy
+            const list = [];
+            for(let i=0;i<k;i++) list.push(PEOPLE[Math.floor(Math.random()*PEOPLE.length)]);
+            grid[d][h].people = list;
+            grid[d][h].busyCount = list.length;
+          } else if(r>0.5){
+            grid[d][h].busyCount = 0;
+            grid[d][h].people = [];
+          } else {
+            grid[d][h].busyCount = 1;
+            grid[d][h].people = [PEOPLE[Math.floor(Math.random()*PEOPLE.length)]];
+          }
+        }
+      }
+    }
+    samplePopulate();
+
+    // create the grid DOM
+    const gridEl = document.getElementById('calendar-grid');
+    // append day columns programmatically (we already have day labels and time column)
+    for(let day=0; day<DAYS; day++){
+      const col = document.createElement('div'); col.className='day-col';
+      const blocks = document.createElement('div'); blocks.className='blocks'; blocks.style.height = `calc(var(--slot-height) * var(--max-hours))`;
+      for(let hr=0; hr<HOURS; hr++){
+        const cell = document.createElement('div'); cell.className='cell';
+        const inner = document.createElement('div'); inner.className='cell-inner';
+        // set data attributes for server renderers
+        const data = grid[day][hr];
+        cell.dataset.busy = data.busyCount;
+        cell.dataset.people = JSON.stringify(data.people.map(p=>({id:p.id,name:p.name,color:p.color,course:'CSE 100'})));
+
+        // occupancy color
+        const occ = document.createElement('div'); occ.className='occupancy';
+        const pct = Math.min(1, data.busyCount / (parseInt(getComputedStyle(document.documentElement).getPropertyValue('--max-people')) || 6));
+        // color scale from green (free) to red (busy) with blue accent for moderate
+        const color = heatColor(pct);
+        occ.style.background = color;
+        occ.style.transform = 'scaleY(1)';
+
+        // count overlay if busy
+        const count = document.createElement('div'); count.className='count'; count.textContent = data.busyCount>0?data.busyCount:'';
+        occ.appendChild(count);
+
+        // tiny avatar markers (first up to 4 people)
+        const markerRow = document.createElement('div'); markerRow.className='marker-row';
+        const people = data.people.slice(0,4);
+        people.forEach(p=>{
+          const m = document.createElement('div'); m.className='marker'; m.title = p.name; m.style.background = `linear-gradient(180deg, ${p.color[0]}, ${p.color[1]})`;
+          markerRow.appendChild(m);
+        });
+
+        inner.appendChild(occ);
+        inner.appendChild(markerRow);
+        cell.appendChild(inner);
+        // event handlers
+        cell.addEventListener('mouseenter', (e)=>showPopover(e.currentTarget, day, hr));
+        cell.addEventListener('mouseleave', hidePopover);
+        col.appendChild(cell);
+      }
+      gridEl.appendChild(col);
+    }
+
+    // compute heat color gradient: pct 0->1
+    function heatColor(pct){
+      // return CSS linear-gradient background that blends a soft base with tinted overlay
+      if(pct<=0) return 'linear-gradient(180deg,#ffffff,#f8fafc)';
+      // green -> yellow -> red
+      const r = Math.floor(255 * pct);
+      const g = Math.floor(200 * (1-pct) + 100*(1-pct));
+      const b = Math.floor(180*(1-pct));
+      const alpha = 0.92;
+      // use a solid color with slight transparency to sit on white
+      return `linear-gradient(180deg, rgba(${Math.min(255, r+40)},${Math.min(255,g)},${Math.min(255,b)},${alpha}), rgba(${r},${Math.max(40,g-40)},${Math.max(60,b)},${alpha}))`;
+    }
+
+    // Popover logic: shows a list of people busy in this cell
+    const pop = document.getElementById('popover');
+    const popTitle = document.getElementById('popover-title');
+    const popList = document.getElementById('popover-list');
+
+    function showPopover(cell, day, hr){
+      const busy = parseInt(cell.dataset.busy || '0');
+      const people = JSON.parse(cell.dataset.people || '[]');
+      if(busy===0){
+        popTitle.textContent = 'Everyone free';
+        popList.innerHTML = '<div class="muted">No one is busy during this slot.</div>';
+      } else {
+        popTitle.textContent = `${busy} busy`;
+        popList.innerHTML = '';
+        people.forEach(p=>{
+          const row = document.createElement('div'); row.className='row';
+          const a = document.createElement('div'); a.className='avatar'; a.style.background = `linear-gradient(180deg, ${p.color[0]}, ${p.color[1]})`; a.textContent = p.name.charAt(0);
+          const txt = document.createElement('div'); txt.innerHTML = `<div style="font-weight:700">${p.name}</div><div class="muted" style="font-size:12px">${p.course}</div>`;
+          row.appendChild(a); row.appendChild(txt); popList.appendChild(row);
+        });
+      }
+
+      // position popover near cell
+      const rect = cell.getBoundingClientRect();
+      const bodyRect = document.body.getBoundingClientRect();
+      pop.style.left = `${rect.left + rect.width/2 - 110}px`;
+      pop.style.top = `${rect.top - 10}px`;
+      pop.classList.add('show');
+      pop.setAttribute('aria-hidden','false');
+    }
+    function hidePopover(){ pop.classList.remove('show'); pop.setAttribute('aria-hidden','true'); }
+
+    // toggle people list
+    document.getElementById('toggle-people').addEventListener('click', ()=>{
+      document.getElementById('people-list').classList.toggle('show');
+    });
+
+    // basic animation: periodically nudge heat a bit to show motion
+    setInterval(()=>{
+      document.querySelectorAll('.occupancy').forEach(o=>{ o.style.transform = 'scaleY(0.99)'; setTimeout(()=>o.style.transform='scaleY(1)',200); });
+    },3500);
+
+  </script>
+</body>
+</html>
