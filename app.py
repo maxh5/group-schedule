@@ -1,20 +1,17 @@
-from datetime import datetime, timedelta
 from flask import Flask, render_template, request
 from flask_sqlalchemy import SQLAlchemy
 import os
 from dotenv import load_dotenv
-import requests
 
 
-# ----- .env -----
+# ----- Load environment -----
 load_dotenv()
 
 
 # ----- App config -----
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret')
-# Use DATABASE_URL if provided, otherwise fall back to a local SQLite file
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///dev.db')
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///dev.db') # Default to SQLite for local dev
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 
@@ -23,9 +20,7 @@ db = SQLAlchemy(app)
 
 
 # ----- Models-----
-class User(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(20), nullable=False)
+import models
 
 
 # ----- ASU API config (moved to extras/api.py) -----
@@ -53,9 +48,16 @@ def view2():
 def view3():
     return render_template('view3.html')
 
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    if request.method == "POST":
+        pass  # TODO: Implement registration logic
+    else:
+        return render_template('register.html')
 
-# ----- DB init for local dev -----
+
+# ----- Main -----
 if __name__ == "__main__":
-    with app.app_context():
+    with app.app_context(): # DB init for local dev
         db.create_all()
     app.run(host="0.0.0.0", port=5000, debug=True)
