@@ -11,10 +11,10 @@ venv/
 .env.*
 
 # SQLite databases
-*.db
+#*.db
 
 # Flask
-instance/
+#instance/
 
 # OS
 .DS_Store

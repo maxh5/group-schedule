@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}Login{% endblock %}
+
+{% block content %}
+
+<h1>Add a Course Section</h1>
+<p>Enter the ASU section id (for example <code>25521</code>) and press Add.</p>
+
+{# Optional flash/message from the view #}
+{% if message %}
+<div class="flash">{{ message }}</div>
+{% endif %}
+
+<!-- Simple POST form. Adjust action to match your Flask route. -->
+<form method="post" action="{{ url_for('me') }}">
+<label for="asu_section_id" class="sr-only" style="display:none;">Section ID</label>
+<input id="asu_section_id" name="asu_section_id" type="text" placeholder="e.g. CSE210-001-FA26" required />
+<button type="submit">Add</button>
+</form>
+
+<section>
+<h2>Your saved sections</h2>
+
+{% if sections %}
+    <ul>
+    {# each section may be a SQLAlchemy model or a dict-like object #}
+    {% for s in sections %}
+        <li>
+        <strong>{{ s.asu_section_id if s.asu_section_id is defined else s.get('asu_section_id') }}</strong>
+        <span class="meta">
+            {% if s.term is defined and s.term %} • {{ s.term }}{% endif %}
+            {% if s.course is defined and s.course.title %} • {{ s.course.title }}{% endif %}
+        </span>
+        </li>
+    {% endfor %}
+    </ul>
+{% else %}
+    <p class="empty">You haven't added any sections yet.</p>
+{% endif %}
+</section>
+
+{% endblock %}

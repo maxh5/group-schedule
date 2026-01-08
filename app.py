@@ -1,7 +1,8 @@
 from flask import Flask, render_template, request, redirect, flash
-from flask_login import logout_user, login_required, login_user
+from flask_login import logout_user, login_required, login_user, current_user
 import os
 from dotenv import load_dotenv
+from sqlalchemy.exc import IntegrityError
 
 
 # ----- Load environment -----
@@ -54,6 +55,53 @@ def view2():
 def view3():
     return render_template('view3.html')
 
+@app.route('/me', methods=['GET'])
+def me():
+    if request.method == "POST":
+        asu_section_id = request.form.get("asu_section_id", "").strip()
+
+        if not asu_section_id:
+            flash("Section ID is required.", "danger")
+            return redirect("/me")
+
+        # Look up the section by ASU section ID
+        section = models.CourseSection.query.filter_by(
+            asu_section_id=asu_section_id
+        ).first()
+
+        if not section:
+            flash("That section does not exist.", "warning")
+            return redirect("/me")
+
+        # Attempt to associate user with section
+        user_section = models.UserCourse(
+            user_id=current_user.id,
+            section_id=section.id
+        )
+
+        try:
+            db.session.add(user_section)
+            db.session.commit()
+            flash("Section added successfully.", "success")
+        except IntegrityError:
+            db.session.rollback()
+            flash("You have already added this section.", "info")
+
+        return redirect("/me")
+    # --- GET ---
+    user_sections = (
+        models.UserCourse.query
+        .filter_by(user_id=current_user.id)
+        .join(models.CourseSection)
+        .all()
+    )
+    sections = [uc.section for uc in user_sections]
+    return render_template(
+        "me.html",
+        sections=sections
+    )
+
+# ----- Routes: AUTH -----
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == "POST":
@@ -73,7 +121,7 @@ def login():
         login_user(user)
         flash("Logged in successfully!", "success")
         return redirect("/")
-    
+    # --- GET ---
     return render_template('login.html')
 
 @app.route('/register', methods=['GET', 'POST'])
