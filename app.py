@@ -22,7 +22,7 @@ from extras.extensions import db, login_manager
 db.init_app(app)
 login_manager.init_app(app)
 """ASU API"""
-from extras.api import fetch_class_by_section
+from extras.api import fetch_class_by_section, parse_class_item
 """Models"""
 import models
 
@@ -55,25 +55,33 @@ def view2():
 def view3():
     return render_template('view3.html')
 
-@app.route('/me', methods=['GET'])
+@app.route('/me', methods=['GET', 'POST'])
 def me():
     if request.method == "POST":
+        '''
+        Takes the form, if the section (and class) are not already stored, makes them. Then adds user
+        '''
         asu_section_id = request.form.get("asu_section_id", "").strip()
 
         if not asu_section_id:
             flash("Section ID is required.", "danger")
             return redirect("/me")
 
-        # Look up the section by ASU section ID
         section = models.CourseSection.query.filter_by(
             asu_section_id=asu_section_id
         ).first()
 
         if not section:
-            flash("That section does not exist.", "warning")
-            return redirect("/me")
+            # Make the section by calling the API
+            class_raw = fetch_class_by_section(asu_section_id)
+            if not class_raw:
+                flash("Section does not exist.", "danger")
+                return redirect("/me")
+            section_data = parse_class_item(class_raw)
+            section = models.CourseSection(**section_data)
+            # user = models.User(first_name=first_name, last_name=last_name)
 
-        # Attempt to associate user with section
+        # Associate user with section
         user_section = models.UserCourse(
             user_id=current_user.id,
             section_id=section.id

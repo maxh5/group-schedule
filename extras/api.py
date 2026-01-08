@@ -21,24 +21,29 @@ def fetch_class_by_section(section_id):
     }
     try:
         r = requests.get(BASE_API_URL, headers=HEADERS, params=params, timeout=10)
-        data = r.json()
+        data = r.json() # Full API response in JSON format
     except Exception as e:
         return {"error": f"Error fetching from API: {e}"}
 
-    for item in data.get("classes", []):
+    for item in data.get("classes", []): # All classes
         clas = item.get("CLAS", {})
-        if str(clas.get("CLASSNBR", "")) == str(section_id):
-            seat = item.get("seatInfo", {})
-            return {
-                "class_number": clas.get("CLASSNBR"),
-                "subject": clas.get("SUBJECT", ""),
-                "catalog_nbr": clas.get("CATALOGNBR", ""),
-                "title": clas.get("TITLE", ""),
-                "instructors": ", ".join(clas.get("INSTRUCTORSLIST", []) or []),
-                "location": clas.get("LOCATION", ""),
-                "meeting_times": clas.get("MEETINGPATTERN", ""),
-                "enrolled": clas.get("ENRLTOT", "") or seat.get("ENRL_TOT", ""),
-                "capacity": clas.get("ENRLCAP", "") or seat.get("ENRL_CAP", ""),
-                "raw": item,
-            }
+        if str(clas.get("CLASSNBR", "")) == str(section_id): # Searched section
+            return item
     return None
+
+def parse_class_item(item):
+    """Parse a raw ASU class API item into a normalized dict."""
+    clas = item.get("CLAS", {}) # Most things are stored inside this sub-dict
+    section_data = {
+        "asu_course_id": item.get("SUBJECTNUMBER", ""),
+        "title": clas.get("COURSETITLELONG", ""),
+        "asu_section_id": clas.get("CLASSNBR", ""),
+        "term": clas.get("STRM", ""),
+        "location": clas.get("DESCR1", ""),
+        "days_of_week": clas.get("DAYLIST", ""),
+        "start_time": clas.get("STARTTIME", ""),
+        "end_time": clas.get("ENDTIME", ""),
+        "start_date": clas.get("STARTDATE", ""),
+        "end_date": clas.get("ENDDATE", "")
+    }
+    return section_data

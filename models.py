@@ -35,26 +35,24 @@ class User(db.Model, UserMixin):
 
 
 class Course(db.Model):
-    """Course itself
-    - asu_course_id, title, and (linked) sections"""
+    """Course itself"""
     __tablename__ = "courses"
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
-    asu_course_id = db.Column(db.String(6), nullable=False)
+    asu_course_id = db.Column(db.String(7), nullable=False)
     title = db.Column(db.String(100), nullable=False)
     sections = db.relationship("CourseSection", back_populates="course", cascade="all, delete-orphan")
 
 
 class CourseSection(db.Model):
-    """Specific course sections/offerings
-    - (linked) course_id, """
+    """Specific course sections/offerings"""
     __tablename__ = "course_sections"
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     course_id = db.Column(db.Integer, db.ForeignKey("courses.id", ondelete="CASCADE"), nullable=False)
     asu_section_id = db.Column(db.Integer, nullable=False, unique=True)  # unique section identifier
     term = db.Column(db.String(20), nullable=False)        # e.g. "Fall 2026"
-    days_of_week = db.Column(db.String(20), nullable=False)  # e.g. "Mon,Wed,Fri"
+    days_of_week = db.Column(db.String(21), nullable=False)  # e.g. "Mon,Wed,Fri"
     start_time = db.Column(db.Time, nullable=False)
     end_time = db.Column(db.Time, nullable=False)
     start_date = db.Column(db.Date, nullable=False)

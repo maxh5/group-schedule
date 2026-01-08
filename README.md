@@ -3,6 +3,7 @@
 ## TODO:
 - stop public caching
 - .env for desktop
+- .env TERM_NUMBER
 - note: instance & db is not gitignored!
 
 ## WIP:
