@@ -1,11 +1,8 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <title>Register</title>
-</head>
-<body>
+{% extends "base.html" %}
 
+{% block title %}Register{% endblock %}
+
+{% block content %}
 <h1>Register</h1>
 
 {# Flash messages (optional but recommended) #}
@@ -41,5 +38,4 @@
 
 </form>
 
-</body>
-</html>
+{% endblock %}

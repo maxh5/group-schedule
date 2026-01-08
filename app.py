@@ -1,5 +1,5 @@
 from flask import Flask, render_template, request, redirect, flash
-from flask_login import LoginManager, logout_user, login_required
+from flask_login import logout_user, login_required, login_user
 import os
 from dotenv import load_dotenv
 
@@ -26,6 +26,12 @@ from extras.api import fetch_class_by_section
 import models
 
 
+# ----- Functions -----
+@login_manager.user_loader
+def load_user(user_id):
+    return models.User.query.get(int(user_id))
+
+
 # ----- Routes -----
 @app.route('/', methods=['GET'])
 def index():
@@ -47,6 +53,28 @@ def view2():
 @app.route('/view3', methods=['GET'])
 def view3():
     return render_template('view3.html')
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == "POST":
+        first_name = request.form["first_name"]
+        last_name = request.form["last_name"]
+        password = request.form["password"]
+        
+        user = models.User.query.filter_by(
+            first_name=first_name,
+            last_name=last_name
+        ).first()
+
+        if not user or not user.check_password(password):
+            flash("Invalid name or password.", "danger")
+            return render_template("login.html")
+
+        login_user(user)
+        flash("Logged in successfully!", "success")
+        return redirect("/")
+    
+    return render_template('login.html')
 
 @app.route('/register', methods=['GET', 'POST'])
 def register():
@@ -71,7 +99,7 @@ def register():
         
         return redirect("/")
     
-    else: return render_template('register.html')
+    return render_template('register.html')
 
 @app.route("/logout")
 @login_required

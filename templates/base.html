@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}MONKEY{% endblock %}</title>
+</head>
+<body>
+
+<!-- ===== Header (appears on all pages) ===== -->
+<header>
+    <nav>
+        <a href="{{ url_for('index') }}">Home</a>
+
+        {% if current_user.is_authenticated %}
+            <span>Hi {{ current_user.first_name }}!</span>
+            <a href="{{ url_for('logout') }}">Logout</a>
+        {% else %}
+            <a href="{{ url_for('login') }}">Login</a>
+            <a href="{{ url_for('register') }}">Register</a>
+        {% endif %}
+    </nav>
+    <hr>
+</header>
+
+<!-- ===== Page-specific content goes here ===== -->
+<main>
+    {% block content %}{% endblock %}
+</main>
+
+</body>
+</html>
