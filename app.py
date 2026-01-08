@@ -1,5 +1,5 @@
-from flask import Flask, render_template, request
-from flask_sqlalchemy import SQLAlchemy
+from flask import Flask, render_template, request, redirect, flash
+from flask_login import LoginManager, logout_user, login_required
 import os
 from dotenv import load_dotenv
 
@@ -15,16 +15,15 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:/
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 
-# ----- DB -----
-db = SQLAlchemy(app)
-
-
-# ----- Models-----
-import models
-
-
-# ----- ASU API config (moved to extras/api.py) -----
+# ----- Imports -----
+"""Flask extensions"""
+from extras.extensions import db, login_manager
+db.init_app(app)
+login_manager.init_app(app)
+"""ASU API"""
 from extras.api import fetch_class_by_section
+"""Models"""
+import models
 
 
 # ----- Routes -----
@@ -36,6 +35,7 @@ def index():
         result = fetch_class_by_section(section)
     return render_template('index.html', result=result, query=section)
 
+@login_required
 @app.route('/view', methods=['GET'])
 def view():
     return render_template('view.html')
@@ -51,9 +51,33 @@ def view3():
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == "POST":
-        pass  # TODO: Implement registration logic
-    else:
-        return render_template('register.html')
+
+        first_name = request.form["first_name"]
+        last_name = request.form["last_name"]
+        password = request.form["password"]
+        confirm = request.form["confirm_password"]
+
+        if password != confirm:
+            flash("Passwords do not match.", "danger")
+            return render_template("register.html")
+
+        user = models.User(first_name=first_name, last_name=last_name)
+        user.set_password(password)
+
+        db.session.add(user)
+        db.session.commit()
+
+        flash("Account created successfully.", "success")
+        
+        return redirect("/")
+    
+    else: return render_template('register.html')
+
+@app.route("/logout")
+@login_required
+def logout():
+    logout_user()
+    return redirect("/")
 
 
 # ----- Main -----

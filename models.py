@@ -1,23 +1,17 @@
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime
-
-db = SQLAlchemy()
-
+from extras.extensions import db
 
 class User(db.Model):
     __tablename__ = "users"
 
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(80), nullable=False)
-    email = db.Column(db.String(255), nullable=False, unique=True, index=True)
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    first_name = db.Column(db.String(25), nullable=False)
+    last_name = db.Column(db.String(50), nullable=False)
     password_hash = db.Column(db.String(255), nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
-    is_active = db.Column(db.Boolean, default=True, nullable=False)
-    email_confirmed = db.Column(db.Boolean, default=False, nullable=False)
 
     def __repr__(self):
-        return f"<User id={self.id} email={self.email!r}>"
+        return f"<{self.first_name} {self.last_name} (id={self.id})>"
 
     # Password helpers
     def set_password(self, password: str):
