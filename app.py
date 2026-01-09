@@ -78,6 +78,12 @@ def me():
                 flash("Section does not exist.", "danger")
                 return redirect("/me")
             section_data = parse_class_item(class_raw)
+            SECTION_FIELDS = {"days_of_week"} # <-- Arguments to pass into the section
+            section_kwargs = {
+                field: section_data[field]
+                for field in SECTION_FIELDS
+                if field in section_data
+            }
             section = models.CourseSection(**section_data)
             # user = models.User(first_name=first_name, last_name=last_name)
 
