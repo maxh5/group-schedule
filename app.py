@@ -56,6 +56,7 @@ def view3():
     return render_template('view3.html')
 
 @app.route('/me', methods=['GET', 'POST'])
+@login_required
 def me():
     if request.method == "POST":
         '''
@@ -95,6 +96,13 @@ def me():
                 for field in SECTION_FIELDS
                 if field in section_data
             }
+            # Ensure numeric section id is an int when possible
+            if "asu_section_id" in section_kwargs:
+                try:
+                    section_kwargs["asu_section_id"] = int(section_kwargs["asu_section_id"])
+                except (TypeError, ValueError):
+                    pass
+
             section = models.CourseSection(**section_kwargs)
             course.sections.append(section)
             db.session.add(course)
@@ -102,7 +110,7 @@ def me():
         # Associate user with section
         user_section = models.UserCourse(
             user_id=current_user.id,
-            section_id=section.id
+            section=section
         )
 
         try:
@@ -170,6 +178,8 @@ def register():
         db.session.commit()
 
         flash("Account created successfully.", "success")
+
+        login_user(user)
         
         return redirect("/")
     

@@ -42,9 +42,14 @@ def parse_class_item(item):
         "term": clas.get("STRM", ""),
         "location": clas.get("DESCR1", ""),
         "days_of_week": clas.get("DAYLIST", ""),
-        "start_time": datetime.strptime(clas.get("STARTTIME", ""), "%I:%M %p").time(),
-        "end_time": datetime.strptime(clas.get("ENDTIME", ""), "%I:%M %p").time(),
+        "start_time": parse_time(clas.get("STARTTIME")),
+        "end_time": parse_time(clas.get("ENDTIME")),
         "start_date": datetime.fromisoformat(clas.get("STARTDATE", "")).date(),
         "end_date": datetime.fromisoformat(clas.get("ENDDATE", "")).date()
     }
     return section_data
+
+def parse_time(value):
+    if not value: return None
+    try: return datetime.strptime(value, "%I:%M %p").time()
+    except ValueError: return None

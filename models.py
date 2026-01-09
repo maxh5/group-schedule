@@ -54,8 +54,8 @@ class CourseSection(db.Model):
     term = db.Column(db.String(20), nullable=False)
     location = db.Column(db.String(25), nullable=False)
     days_of_week = db.Column(db.String(21), nullable=False)
-    start_time = db.Column(db.Time, nullable=False)
-    end_time = db.Column(db.Time, nullable=False)
+    start_time = db.Column(db.Time, nullable=True)
+    end_time = db.Column(db.Time, nullable=True)
     start_date = db.Column(db.Date, nullable=False)
     end_date = db.Column(db.Date, nullable=False)
 
