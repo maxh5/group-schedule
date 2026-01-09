@@ -17,14 +17,8 @@
   {% elif result == none %}
     <p>No class found for section {{ query }}</p>
   {% else %}
-    <h2>{{ result.title }} — {{ result.subject }} {{ result.catalog_nbr }}</h2>
-    <p><strong>Section:</strong> {{ result.class_number }}</p>
-    <p><strong>Instructors:</strong> {{ result.instructors }}</p>
-    <p><strong>Location:</strong> {{ result.location }}</p>
-    <p><strong>Meeting times:</strong> {{ result.meeting_times }}</p>
-    <p><strong>Enrolled:</strong> {{ result.enrolled }} / {{ result.capacity }}</p>
-    <h3>Raw data (debug)</h3>
-    <pre>{{ result.raw | tojson(indent=2) }}</pre>
+    <h2>Raw data (debug)</h3>
+    <pre>{{ result | tojson(indent=2) }}</pre>
   {% endif %}
 {% endif %}
 

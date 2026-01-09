@@ -50,9 +50,10 @@ class CourseSection(db.Model):
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     course_id = db.Column(db.Integer, db.ForeignKey("courses.id", ondelete="CASCADE"), nullable=False)
-    asu_section_id = db.Column(db.Integer, nullable=False, unique=True)  # unique section identifier
-    term = db.Column(db.String(20), nullable=False)        # e.g. "Fall 2026"
-    days_of_week = db.Column(db.String(21), nullable=False)  # e.g. "Mon,Wed,Fri"
+    asu_section_id = db.Column(db.Integer, nullable=False, unique=True)
+    term = db.Column(db.String(20), nullable=False)
+    location = db.Column(db.String(25), nullable=False)
+    days_of_week = db.Column(db.String(21), nullable=False)
     start_time = db.Column(db.Time, nullable=False)
     end_time = db.Column(db.Time, nullable=False)
     start_date = db.Column(db.Date, nullable=False)

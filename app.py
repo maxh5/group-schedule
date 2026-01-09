@@ -61,7 +61,7 @@ def me():
         '''
         Takes the form, if the section (and class) are not already stored, makes them. Then adds user
         '''
-        asu_section_id = request.form.get("asu_section_id", "").strip()
+        asu_section_id = int(request.form.get("asu_section_id", "").strip())
 
         if not asu_section_id:
             flash("Section ID is required.", "danger")
@@ -72,20 +72,32 @@ def me():
         ).first()
 
         if not section:
-            # Make the section by calling the API
+            # Fetch section data from API
             class_raw = fetch_class_by_section(asu_section_id)
             if not class_raw:
                 flash("Section does not exist.", "danger")
                 return redirect("/me")
             section_data = parse_class_item(class_raw)
-            SECTION_FIELDS = {"days_of_week"} # <-- Arguments to pass into the section
+
+            # Query course; create if it doesn't exist
+            course = models.Course.query.filter_by(
+                asu_course_id=section_data["asu_course_id"],
+                title=section_data["title"]
+            ).first()
+
+            if not course:
+                course = models.Course(asu_course_id=section_data["asu_course_id"], title=section_data["title"])
+
+            # Add section & push changes
+            SECTION_FIELDS = {"asu_section_id", "term", "location", "days_of_week", "start_time", "end_time", "start_date", "end_date"} # <-- Arguments to pass into the section
             section_kwargs = {
                 field: section_data[field]
                 for field in SECTION_FIELDS
                 if field in section_data
             }
-            section = models.CourseSection(**section_data)
-            # user = models.User(first_name=first_name, last_name=last_name)
+            section = models.CourseSection(**section_kwargs)
+            course.sections.append(section)
+            db.session.add(course)
 
         # Associate user with section
         user_section = models.UserCourse(
@@ -102,7 +114,7 @@ def me():
             flash("You have already added this section.", "info")
 
         return redirect("/me")
-    # --- GET ---
+    # GET
     user_sections = (
         models.UserCourse.query
         .filter_by(user_id=current_user.id)
