@@ -36,11 +36,23 @@ def load_user(user_id):
 # ----- Routes -----
 @app.route('/', methods=['GET'])
 def index():
+    events = None
+    if current_user.is_authenticated:
+        events = (
+            models.Event.query
+            .filter_by(user_id=current_user.id)
+            .order_by(models.Event.start)
+            .all()
+        )
+    return render_template('index.html', events=events)
+
+@app.route('/api', methods=['GET'])
+def api():
     section = request.args.get('section')
     result = None
     if section:
         result = fetch_class_by_section(section)
-    return render_template('index.html', result=result, query=section)
+    return render_template('api.html', result=result, query=section)
 
 @login_required
 @app.route('/view', methods=['GET'])
@@ -89,20 +101,15 @@ def me():
             if not course:
                 course = models.Course(asu_course_id=section_data["asu_course_id"], title=section_data["title"])
 
-            # Add section & push changes
+            # Add section
             SECTION_FIELDS = {"asu_section_id", "term", "location", "days_of_week", "start_time", "end_time", "start_date", "end_date"} # <-- Arguments to pass into the section
             section_kwargs = {
                 field: section_data[field]
                 for field in SECTION_FIELDS
                 if field in section_data
             }
-            # Ensure numeric section id is an int when possible
-            if "asu_section_id" in section_kwargs:
-                try:
-                    section_kwargs["asu_section_id"] = int(section_kwargs["asu_section_id"])
-                except (TypeError, ValueError):
-                    pass
-
+            # Ensure numeric section id is an int
+            section_kwargs["asu_section_id"] = int(section_kwargs["asu_section_id"])
             section = models.CourseSection(**section_kwargs)
             course.sections.append(section)
             db.session.add(course)
@@ -115,6 +122,8 @@ def me():
 
         try:
             db.session.add(user_section)
+            # Add events from UserCourse
+            user_section.create_events(db.session)
             db.session.commit()
             flash("Section added successfully.", "success")
         except IntegrityError:
@@ -134,6 +143,7 @@ def me():
         "me.html",
         sections=sections
     )
+
 
 # ----- Routes: AUTH -----
 @app.route('/login', methods=['GET', 'POST'])

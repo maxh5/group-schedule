@@ -5,21 +5,41 @@
 {% block content %}
 <h1>Home</h1>
 
-<form action="/" method="get">
-  <label for="section">Class section id (numbers):</label>
-  <input id="section" name="section" placeholder="e.g., 19134" value="{{ query or '' }}" />
-  <button type="submit">Search</button>
-</form>
+<h1>My Events</h1>
 
-{% if result is not none %}
-  {% if result.error %}
-    <p><strong>Error:</strong> {{ result.error }}</p>
-  {% elif result == none %}
-    <p>No class found for section {{ query }}</p>
-  {% else %}
-    <h2>Raw data (debug)</h3>
-    <pre>{{ result | tojson(indent=2) }}</pre>
-  {% endif %}
+{% if events %}
+<table style="width:100%; border-collapse: collapse; margin-top: 16px;">
+  <thead>
+    <tr>
+      <th style="text-align:left; padding:8px; border-bottom:1px solid #ccc;">Title</th>
+      <th style="text-align:left; padding:8px; border-bottom:1px solid #ccc;">Start</th>
+      <th style="text-align:left; padding:8px; border-bottom:1px solid #ccc;">End</th>
+      <th style="text-align:left; padding:8px; border-bottom:1px solid #ccc;">Type</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for e in events %}
+    <tr>
+      <td style="padding:8px; border-bottom:1px solid #eee;">
+        {{ e.title }}
+      </td>
+      <td style="padding:8px; border-bottom:1px solid #eee;">
+        {{ e.start.strftime("%a %b %d, %Y %I:%M %p") }}
+      </td>
+      <td style="padding:8px; border-bottom:1px solid #eee;">
+        {{ e.end.strftime("%a %b %d, %Y %I:%M %p") }}
+      </td>
+      <td style="padding:8px; border-bottom:1px solid #eee;">
+        {{ e.event_type }}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p style="margin-top: 16px; color: #666;">
+  No events found.
+</p>
 {% endif %}
 
 {% endblock %}

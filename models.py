@@ -2,6 +2,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from extras.extensions import db
 from flask_login import UserMixin
 from sqlalchemy import UniqueConstraint
+from datetime import datetime, timedelta
 
 
 class User(db.Model, UserMixin):
@@ -53,7 +54,7 @@ class CourseSection(db.Model):
     asu_section_id = db.Column(db.Integer, nullable=False, unique=True)
     term = db.Column(db.String(20), nullable=False)
     location = db.Column(db.String(25), nullable=False)
-    days_of_week = db.Column(db.String(21), nullable=False)
+    days_of_week = db.Column(db.String(10), nullable=True)
     start_time = db.Column(db.Time, nullable=True)
     end_time = db.Column(db.Time, nullable=True)
     start_date = db.Column(db.Date, nullable=False)
@@ -75,3 +76,68 @@ class UserCourse(db.Model):
 
     user = db.relationship("User", back_populates="saved_sections")
     section = db.relationship("CourseSection", back_populates="enrolled_users")
+    events = db.relationship("Event", back_populates="user_course", cascade="all, delete-orphan")
+
+    def create_events(self, session):
+        """Create event rows based on this UserCourse connection.
+
+        This will create one Event per meeting date derived from the linked
+        CourseSection and add them to the provided SQLAlchemy session (or
+        `db.session` if none is provided).
+        """
+        user = self.user
+        section = self.section
+        start_date = self.section.start_date
+        end_date = self.section.end_date
+        start_time = self.section.start_time
+        end_time = self.section.end_time
+
+        # Map days to values (e.g. M = 1)
+        days = section.days_of_week.split()
+        mapping = {"M": 0, "T": 1, "W": 2, "Th": 3, "F": 4}
+        dayValues = set(mapping[day] for day in days if day in mapping)
+
+        # Idempotency: delete previously generated events for this user+section
+        session.query(Event).filter_by(user_course_id=self.id).delete(synchronize_session=False)
+
+        # For each day, find first occurance and then increment by 7
+        for target_day in dayValues:
+            delta_days = (target_day - start_date.weekday() + 7) % 7
+            occurence_date = start_date + timedelta(days=delta_days)
+            while occurence_date < end_date:
+                start_dt = datetime.combine(occurence_date, start_time)
+                end_dt = datetime.combine(occurence_date, end_time)
+                ev = Event(
+                    user_id = self.user_id,
+                    title = section.course.title,
+                    start = start_dt,
+                    end = end_dt,
+                    user_course_id = self.id
+                )
+                session.add(ev)
+                occurence_date += timedelta(days=7)
+        return
+
+
+class Event(db.Model):
+    """Events as they appear on the calendar"""
+    __tablename__ = "events"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+
+    title = db.Column(db.String(255), nullable=False)
+    start = db.Column(db.DateTime, nullable=False)
+    end = db.Column(db.DateTime, nullable=False)
+
+    user_course_id = db.Column(
+        db.Integer,
+        db.ForeignKey("user_courses.id", ondelete="CASCADE"),
+        nullable=True,
+    )
+    user_course = db.relationship("UserCourse", back_populates="events")
+
+    user = db.relationship("User", backref="events")
+
+    def __repr__(self):
+        return f"<Event {self.title} {self.start.isoformat()} -> {self.end.isoformat()}>"

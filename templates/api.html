@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block title %}Home{% endblock %}
+
+{% block content %}
+<h1>API Raw Search</h1>
+
+<form action="/" method="get">
+  <label for="section">Class section id (numbers):</label>
+  <input id="section" name="section" placeholder="e.g., 19134" value="{{ query or '' }}" />
+  <button type="submit">Search</button>
+</form>
+
+{% if result is not none %}
+  {% if result.error %}
+    <p><strong>Error:</strong> {{ result.error }}</p>
+  {% elif result == none %}
+    <p>No class found for section {{ query }}</p>
+  {% else %}
+    <h2>Data:</h3>
+    <pre>{{ result | tojson(indent=2) }}</pre>
+  {% endif %}
+{% endif %}
+
+{% endblock %}
