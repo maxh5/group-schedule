@@ -67,6 +67,10 @@ def view2():
 def view3():
     return render_template('view3.html')
 
+@app.route('/view4', methods=['GET'])
+def view4():
+    return render_template('view4.html')
+
 @app.route('/me', methods=['GET', 'POST'])
 @login_required
 def me():
