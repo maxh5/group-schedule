@@ -173,8 +173,8 @@ function drawDayGradient(dayIndex){
 
   // Add subtle horizontal hour lines
   ctx.globalCompositeOperation = 'source-over';
-  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
-  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+  ctx.lineWidth = 1.5;
   for(let hour = CFG.workStartHour; hour <= CFG.workEndHour; hour++){
     const minuteIndex = (hour*60) - startMin;
     if (minuteIndex < 0 || minuteIndex > totalMins) continue;

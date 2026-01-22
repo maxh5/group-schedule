@@ -54,17 +54,8 @@ def api():
         result = fetch_class_by_section(section)
     return render_template('api.html', result=result, query=section)
 
-@login_required
 @app.route('/view', methods=['GET'])
 def view():
-    return render_template('view.html')
-
-@app.route('/view2', methods=['GET'])
-def view2():
-    return render_template('view2.html')
-
-@app.route('/view3', methods=['GET'])
-def view3():
     # Sample data for now
     people = [
         {"id": "p1", "name": "Aisha", "color": "#FF8A80"},
@@ -93,11 +84,7 @@ def view3():
         {"day": 4, "start": "10:00", "end": "12:00", "person": "p2"},
         {"day": 4, "start": "11:20", "end": "13:30", "person": "p3"},
     ]
-    return render_template('view3.html', people=people, events=events)
-
-@app.route('/view4', methods=['GET'])
-def view4():
-    return render_template('view4.html')
+    return render_template('view.html', people=people, events=events)
 
 @app.route('/me', methods=['GET', 'POST'])
 @login_required

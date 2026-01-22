@@ -1,297 +1,44 @@
-<!-- group_calendar_design.html
+{% extends "base.html" %}
 
-Ground-up rebuild: vertical gradients per-day indicating density across time.
-- Each day column is a single tall gradient (top=earlier, bottom=later)
-- JS computes a gradient string from grid occupancy percentages and injects it as the day's background
-- Hovering shows a thin tooltip with exact busy count per hour; clicking opens popover listing people
-- Still template-friendly: server should inject `grid` (days x hours) and `people` arrays; demo uses random data
+{% block title %}Calendar View{% endblock %}
 
--->
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Group Availability — Gradient Vertical View</title>
-  <style>
-    :root{
-      --bg:#f4f6fb;
-      --card:#ffffff;
-      --muted:#6b7280;
-      --time-col:56px;
-      --hours:12; /* 8:00 - 19:00 inclusive */
-      --slot-h:44px;
-      --max-people:12;
-      --font: Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial;
-    }
-    *{box-sizing:border-box}
-    body{font-family:var(--font);margin:0;background:var(--bg);color:#0f172a}
-    .wrap{max-width:1280px;margin:18px auto;padding:12px}
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/calendar.css') }}">
+<script src="{{ url_for('static', filename='js/calendar.js') }}" defer></script>
+{% endblock %}
 
-    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
-    .brand{display:flex;align-items:center;gap:12px}
-    .logo{width:44px;height:44px;border-radius:10px;background:linear-gradient(135deg,#7c3aed,#06b6d4);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700}
-    h1{font-size:18px;margin:0}
-    .profile{font-size:13px;color:var(--muted)}
+{% block content %}
 
-    .controls{display:flex;gap:12px;align-items:center;margin-bottom:12px}
-    .people-toggle{display:flex;gap:8px;align-items:center}
-    .actions{margin-left:auto;display:flex;gap:8px}
-    button{padding:8px 12px;border-radius:8px;border:1px solid rgba(2,6,23,0.06);background:#fff;cursor:pointer}
-
-    .layout{display:grid;grid-template-columns:1fr 320px;gap:14px}
-    .calendar{background:var(--card);padding:12px;border-radius:12px;box-shadow:0 8px 34px rgba(2,6,23,0.06)}
-    .sidebar{background:var(--card);padding:12px;border-radius:12px;box-shadow:0 8px 34px rgba(2,6,23,0.06)}
-
-    .calendar-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-    .calendar-grid{display:grid;grid-template-columns:var(--time-col) repeat(5,1fr);gap:12px;align-items:start}
-
-    .time-col{display:flex;flex-direction:column;gap:0}
-    .time-cell{height:var(--slot-h);display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;border-bottom:1px solid rgba(15,23,42,0.03)}
-
-    .day-col{position:relative;border-radius:10px;overflow:visible}
-    .day-label{height:34px;display:flex;align-items:center;justify-content:center;font-weight:700;margin-bottom:8px}
-
-    /* Gradient column: a single tall container of height hours*slot-h */
-    .gradient-col{position:relative;border-radius:10px;height:calc(var(--hours) * var(--slot-h));overflow:hidden;border:1px solid rgba(15,23,42,0.04)}
-    /* overlay grid lines for hour separators */
-    .grad-grid{position:absolute;inset:0;pointer-events:none}
-    .grad-grid .line{height:var(--slot-h);border-bottom:1px solid rgba(255,255,255,0.08)}
-
-    /* top overlay that shows numeric occupancy when hovered */
-    .hover-indicator{position:absolute;left:0;right:0;height:var(--slot-h);transform:translateY(-9999px);background:rgba(0,0,0,0.04);backdrop-filter:blur(0.5px);display:flex;align-items:center;padding-left:8px;color:#fff;font-weight:700;pointer-events:none;border-radius:6px}
-
-    /* tiny markers at right showing avatars stacked */
-    .avatar-stack{position:absolute;right:6px;bottom:6px;display:flex;flex-direction:column;gap:6px}
-    .avatar{width:28px;height:28px;border-radius:8px;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;box-shadow:0 6px 18px rgba(2,6,23,0.12)}
-
-    /* popover */
-    .popover{position:fixed;background:#fff;border-radius:10px;padding:10px;box-shadow:0 12px 40px rgba(2,6,23,0.18);min-width:220px;z-index:80;display:none}
-    .popover h4{margin:0 0 8px 0}
-    .popover .row{display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px dashed rgba(15,23,42,0.04)}
-
-    .legend{display:flex;gap:8px;flex-wrap:wrap}
-    .legend-item{display:flex;align-items:center;gap:8px}
-
-    @media (max-width:980px){.layout{grid-template-columns:1fr}}
-  </style>
-</head>
-<body>
-  <div class="wrap">
-    <header>
-      <div class="brand">
-        <div class="logo">AS</div>
-        <div>
-          <h1>ASU Meetups</h1>
-          <div class="profile">Group availability — vertical gradient view</div>
-        </div>
+<div class="container" role="application" aria-label="Weekly availability prototype">
+    <div class="header">
+      <div>
+        <div class="title">Weekly Availability — hover a column</div>
+        <div class="subtitle">Vertical gradient = how many people are busy at that minute</div>
       </div>
-      <div class="actions">
-        <button onclick="location.href='#'">+ Add Class</button>
-        <button onclick="location.href='#'">+ Plan Event</button>
+      <div class="legend" aria-hidden="true">
+        <div class="swatch"></div>
+        <div class="muted">more busy →</div>
       </div>
-    </header>
-
-    <div class="controls" style="display:flex;align-items:center;gap:12px;margin-bottom:12px">
-      <div class="people-toggle">People: <strong style="margin-left:8px">All</strong></div>
     </div>
 
-    <div class="layout">
-      <div class="calendar">
-        <div class="calendar-head">
-          <div style="font-weight:700">Weekly availability</div>
-          <div class="muted">Week of <strong>Mon Jan 12</strong></div>
-        </div>
-
-        <div class="calendar-grid" id="calendar-grid">
-          <div></div>
-          <div class="day-label">Mon</div>
-          <div class="day-label">Tue</div>
-          <div class="day-label">Wed</div>
-          <div class="day-label">Thu</div>
-          <div class="day-label">Fri</div>
-
-          <div class="time-col" id="time-col">
-            <!-- times 8:00 -> 19:00 -->
-          </div>
-
-          <!-- day columns will be inserted by JS -->
-        </div>
-
-      </div>
-
-      <aside class="sidebar">
-        <div class="next-times">
-          <h3>Next best times</h3>
-          <ul id="best-times"><li>Today 12:00–13:00</li><li>Thu 15:00–16:00</li></ul>
-        </div>
-
-        <div style="margin-top:12px">
-          <div style="font-weight:700;margin-bottom:6px">Legend</div>
-          <div class="legend" id="legend"></div>
-        </div>
-      </aside>
+    <div class="week">
+      <div class="time-column" id="time-column"></div>
+      <div class="days" id="days"></div>
     </div>
   </div>
 
-  <div id="popover" class="popover" role="dialog" aria-hidden="true"></div>
+  <div id="tooltip" class="tooltip" role="dialog" aria-hidden="true">
+    <span class="time" id="tooltip-time">08:00</span>
+    <div id="tooltip-list"><span class="muted">No one in class</span></div>
+  </div>
 
-  <script>
-    // Demo: create grid and people data. Replace with server data in production.
-    const PEOPLE = [
-      {id:'p1',name:'Alice',color:['#60a5fa','#3b82f6']},
-      {id:'p2',name:'Ben',color:['#34d399','#10b981']},
-      {id:'p3',name:'You',color:['#c084fc','#7c3aed']},
-      {id:'p4',name:'Sam',color:['#fb7185','#ef4444']},
-      {id:'p5',name:'Mia',color:['#f59e0b','#f97316']},
-      {id:'p6',name:'Lee',color:['#60a5fa','#2563eb']},
-      {id:'p7',name:'Zoe',color:['#a78bfa','#7c3aed']},
-      {id:'p8',name:'Omar',color:['#34d399','#059669']},
-      {id:'p9',name:'Nina',color:['#f97316','#ef4444']},
-      {id:'p10',name:'Raj',color:['#06b6d4','#0891b2']}
-    ];
-
-    const DAYS=5, HOURS=12; // 8..19
-    // grid[day][hour] -> {people: [{id,name,color,course}], busyCount}
-    const grid = Array.from({length:DAYS}, ()=> Array.from({length:HOURS}, ()=> ({people:[],busyCount:0})));
-
-    // populate deterministic demo values (for more realistic gradients)
-    function populateDemo(){
-      for(let d=0; d<DAYS; d++){
-        for(let h=0; h<HOURS; h++){
-          const idx = (d*HOURS + h) % PEOPLE.length;
-          const count = Math.max(0, Math.round( (Math.sin((d+1)*(h+2)/5)*2.5) + 2 ));
-          const list = [];
-          for(let i=0;i<count;i++) list.push(PEOPLE[(idx+i) % PEOPLE.length]);
-          grid[d][h].people = list;
-          grid[d][h].busyCount = list.length;
-        }
-      }
-    }
-    populateDemo();
-
-    // build time column
-    const timeCol = document.getElementById('time-col');
-    for(let h=0; h<HOURS; h++){
-      const hour = 8 + h;
-      const el = document.createElement('div'); el.className='time-cell'; el.textContent = (hour<=12?hour:hour-12) + (hour<12?' AM':' PM');
-      timeCol.appendChild(el);
-    }
-
-    const calendarGrid = document.getElementById('calendar-grid');
-    const legend = document.getElementById('legend');
-
-    // render legend
-    PEOPLE.forEach(p=>{
-      const it = document.createElement('div'); it.className='legend-item';
-      const a = document.createElement('div'); a.className='avatar'; a.style.background = `linear-gradient(180deg, ${p.color[0]}, ${p.color[1]})`; a.textContent = p.name.charAt(0);
-      const name = document.createElement('div'); name.textContent = p.name;
-      it.appendChild(a); it.appendChild(name); legend.appendChild(it);
-    });
-
-    // function to map count -> color stop
-    function colorForCount(count){
-      // scale 0..max -> colors from translucent green -> orange -> deep red
-      const max = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--max-people')) || 12;
-      const t = Math.min(1, count / max);
-      // use HSL interpolation: 120 (green) -> 30 (orange) -> 0 (red)
-      const hue = t < 0.6 ? Math.round(120 - (t/0.6)*(120-30)) : Math.round(30 - ((t-0.6)/0.4)*30);
-      const light = Math.round(90 - t*40);
-      const a = 0.95;
-      return `hsl(${hue}deg 80% ${light}%)`; // CSS color
-    }
-
-    // create day columns with gradient backgrounds
-    for(let d=0; d<DAYS; d++){
-      const col = document.createElement('div'); col.className='day-col';
-      const lab = document.createElement('div'); lab.className='day-label'; lab.textContent = ['Mon','Tue','Wed','Thu','Fri'][d];
-      const grad = document.createElement('div'); grad.className='gradient-col';
-
-      // compute gradient stops top->bottom based on hourly counts
-      const stops = [];
-      for(let h=0; h<HOURS; h++){
-        const cnt = grid[d][h].busyCount;
-        const pctStart = (h / HOURS) * 100;
-        const pctEnd = ((h+1)/HOURS) * 100;
-        const color = colorForCount(cnt);
-        // make a pair of stops so the gradient has hard steps between hours
-        stops.push(`${color} ${pctStart}%`, `${color} ${pctEnd}%`);
-      }
-      const gradCSS = `linear-gradient(to bottom, ${stops.join(', ')})`;
-      grad.style.background = gradCSS;
-
-      // overlay grid lines
-      const overlay = document.createElement('div'); overlay.className='grad-grid';
-      for(let h=0; h<HOURS; h++){ const line = document.createElement('div'); line.className='line'; overlay.appendChild(line);} 
-      grad.appendChild(overlay);
-
-      // avatar stack showing most frequent people in column
-      const avatarStack = document.createElement('div'); avatarStack.className='avatar-stack';
-      // compute frequency
-      const freq = {};
-      grid[d].forEach(cell=>cell.people.forEach(p=>freq[p.id]=(freq[p.id]||0)+1));
-      const order = Object.keys(freq).sort((a,b)=>freq[b]-freq[a]).slice(0,4);
-      order.forEach(id=>{ const p = PEOPLE.find(x=>x.id===id); if(!p) return; const av = document.createElement('div'); av.className='avatar'; av.style.background=`linear-gradient(180deg, ${p.color[0]}, ${p.color[1]})`; av.textContent = p.name.charAt(0); avatarStack.appendChild(av); });
-
-      // hover indicator that follows mouse to show hour and count
-      const hover = document.createElement('div'); hover.className='hover-indicator'; hover.style.display='none'; hover.textContent=''; grad.appendChild(hover);
-
-      // mousemove to position hover indicator and show count
-      grad.addEventListener('mousemove', (ev)=>{
-        const rect = grad.getBoundingClientRect();
-        let y = Math.max(0, Math.min(rect.height, ev.clientY - rect.top));
-        // compute hour index
-        const hIndex = Math.floor((y / rect.height) * HOURS);
-        const cell = grid[d][hIndex];
-        hover.style.display = 'flex';
-        hover.style.top = `${(hIndex * (rect.height / HOURS)) + 2}px`;
-        hover.textContent = `${cell.busyCount} busy — ${ (8+hIndex)<=12? (8+hIndex)+' AM': (8+hIndex-12)+' PM' }`;
-      });
-      grad.addEventListener('mouseleave', ()=>{ hover.style.display='none'; });
-
-      // click to open popover with details for that hour
-      grad.addEventListener('click', (ev)=>{
-        const rect = grad.getBoundingClientRect();
-        let y = Math.max(0, Math.min(rect.height, ev.clientY - rect.top));
-        const hIndex = Math.floor((y / rect.height) * HOURS);
-        showPopoverFor(d, hIndex, ev.clientX, ev.clientY);
-      });
-
-      grad.appendChild(avatarStack);
-
-      col.appendChild(lab); col.appendChild(grad); calendarGrid.appendChild(col);
-    }
-
-    // popover
-    const pop = document.getElementById('popover');
-    function showPopoverFor(day,hour,x,y){
-      const cell = grid[day][hour];
-      pop.innerHTML = '';
-      const title = document.createElement('h4'); title.textContent = `${['Mon','Tue','Wed','Thu','Fri'][day]} ${(hour+8)<=12? (hour+8)+' AM': (hour+8-12)+' PM'}`; pop.appendChild(title);
-      if(cell.people.length===0){ const empty = document.createElement('div'); empty.className='muted'; empty.textContent='No one is busy'; pop.appendChild(empty);} else {
-        cell.people.forEach(p=>{
-          const row = document.createElement('div'); row.className='row';
-          const a = document.createElement('div'); a.className='avatar'; a.style.background=`linear-gradient(180deg, ${p.color[0]}, ${p.color[1]})`; a.textContent = p.name.charAt(0);
-          const txt = document.createElement('div'); txt.innerHTML = `<div style="font-weight:700">${p.name}</div><div class="muted" style="font-size:12px">${p.course || 'class'}</div>`;
-          row.appendChild(a); row.appendChild(txt); pop.appendChild(row);
-        });
-      }
-      pop.style.left = (x + 12) + 'px'; pop.style.top = (y + 12) + 'px'; pop.style.display='block'; pop.setAttribute('aria-hidden','false');
-    }
-    document.addEventListener('click', (e)=>{ if(!e.target.closest('.gradient-col')){ pop.style.display='none'; pop.setAttribute('aria-hidden','true'); }});
-
-    // Example: update best times (simple heuristic: lowest total busy across days)
-    function computeBestTimes(){
-      const buckets = [];
-      for(let h=0;h<HOURS;h++){
-        let total=0; for(let d=0;d<DAYS;d++) total+=grid[d][h].busyCount; buckets.push({hour:h,total});
-      }
-      buckets.sort((a,b)=>a.total-b.total);
-      const best = buckets.slice(0,3).map(b=>{ const hr = b.hour+8; return `${(hr<=12?hr:hr-12)} ${(hr<12?'AM':'PM')}`});
-      const el = document.getElementById('best-times'); el.innerHTML = ''; best.forEach(t=>{ const li = document.createElement('li'); li.textContent = t; el.appendChild(li); });
-    }
-    computeBestTimes();
-
-  </script>
-</body>
-</html>
+<script>
+  // Initialize with data from Flask
+  const people = {{ people | tojson }};
+  const events = {{ events | tojson }};
+  // Assuming the JS has a way to set data
+  if (window.CalendarPrototype) {
+    window.CalendarPrototype.redraw(events, people);
+  }
+</script>
+{% endblock %}

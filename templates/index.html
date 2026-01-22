@@ -8,28 +8,28 @@
 <h1>My Events</h1>
 
 {% if events %}
-<table style="width:100%; border-collapse: collapse; margin-top: 16px;">
+<table>
   <thead>
     <tr>
-      <th style="text-align:left; padding:8px; border-bottom:1px solid #ccc;">Title</th>
-      <th style="text-align:left; padding:8px; border-bottom:1px solid #ccc;">Start</th>
-      <th style="text-align:left; padding:8px; border-bottom:1px solid #ccc;">End</th>
-      <th style="text-align:left; padding:8px; border-bottom:1px solid #ccc;">Type</th>
+      <th>Title</th>
+      <th>Start</th>
+      <th>End</th>
+      <th>Type</th>
     </tr>
   </thead>
   <tbody>
     {% for e in events %}
     <tr>
-      <td style="padding:8px; border-bottom:1px solid #eee;">
+      <td>
         {{ e.title }}
       </td>
-      <td style="padding:8px; border-bottom:1px solid #eee;">
+      <td>
         {{ e.start.strftime("%a %b %d, %Y %I:%M %p") }}
       </td>
-      <td style="padding:8px; border-bottom:1px solid #eee;">
+      <td>
         {{ e.end.strftime("%a %b %d, %Y %I:%M %p") }}
       </td>
-      <td style="padding:8px; border-bottom:1px solid #eee;">
+      <td>
         {{ e.event_type }}
       </td>
     </tr>
@@ -37,7 +37,7 @@
   </tbody>
 </table>
 {% else %}
-<p style="margin-top: 16px; color: #666;">
+<p>
   No events found.
 </p>
 {% endif %}

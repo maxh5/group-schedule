@@ -1,28 +1,14 @@
 :root{
-    --col-gap: 8px;
+    --col-gap: 6px;
     --day-width: 150px;
     --workday-start: 8; /* hour */
     --workday-end: 20;  /* hour */
     --canvas-height: 720px; /* px (maps to hours) */
-    --bg: #f0f4f8;
     --card-bg: #ffffff;
-    --muted: #64748b;
+    --time-col-width: 50px;
   }
-  html,body{
-    height:100%;
-    margin:0;
-    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
-    background: linear-gradient(180deg, #f0f4f8 0%, #e1e8ed 100%);
-    color:#1e293b;
-    display:flex;
-    align-items:flex-start;
-    justify-content:center;
-    padding:28px;
-    box-sizing:border-box;
-  }
-
   .container{
-    width: calc(var(--day-width) * 5 + var(--col-gap) * 4 + 40px);
+    width: calc(var(--time-col-width) + var(--col-gap) + var(--day-width) * 5 + var(--col-gap) * 4 + 40px);
     background: rgba(255,255,255,0.9);
     border-radius:12px;
     padding:18px;
@@ -45,24 +31,24 @@
   .subtitle { color:var(--muted); font-size:13px; }
 
   .week{
-    display: flex;
-    justify-content: center;
-    position: relative;
+    display: grid;
+    grid-template-columns: var(--time-col-width) 1fr;
+    gap: var(--col-gap);
   }
 
   .time-column{
-    position: absolute;
-    left: -70px;
-    top: 0;
-    width: 60px;
+    width: var(--time-col-width);
     color: var(--muted);
     font-size: 12px;
     height: calc(var(--canvas-height) + 42px);
+    top: 0;
+    position: relative;
   }
 
   .days{
     display:flex;
     gap:var(--col-gap);
+    justify-content: center;
   }
 
   .day {

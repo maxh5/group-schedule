@@ -3,6 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <title>{% block title %}MONKEY{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/shared.css') }}">
+    {% block extra_head %}{% endblock %}
 </head>
 <body>
 
@@ -12,7 +14,7 @@
         <a href="{{ url_for('index') }}">Home</a>
 
         {% if current_user.is_authenticated %}
-            <span>Hi {{ current_user.first_name }}!</span>
+            <span class="account-label">Hi {{ current_user.first_name }}!</span>
             <a href="{{ url_for('logout') }}">Logout</a>
             <a href="{{ url_for('me') }}">Me</a>
         {% else %}
@@ -20,7 +22,6 @@
             <a href="{{ url_for('register') }}">Register</a>
         {% endif %}
     </nav>
-    <hr>
 </header>
 
 <!-- ===== Page-specific content goes here ===== -->
