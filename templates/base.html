@@ -10,17 +10,10 @@
 
 <!-- ===== Header (appears on all pages) ===== -->
 <header>
-    <nav>
-        <a href="{{ url_for('index') }}">Home</a>
-
-        {% if current_user.is_authenticated %}
-            <span class="account-label">Hi {{ current_user.first_name }}!</span>
-            <a href="{{ url_for('logout') }}">Logout</a>
-            <a href="{{ url_for('me') }}">Me</a>
-        {% else %}
-            <a href="{{ url_for('login') }}">Login</a>
-            <a href="{{ url_for('register') }}">Register</a>
-        {% endif %}
+    <nav class="center-nav">
+        <span class="nav-item">Groups</span>
+        <a href="{{ url_for('index') }}" class="nav-item nav-link">Calendar</a>
+        <a href="{{ url_for('me') }}" class="nav-item nav-link">Me</a>
     </nav>
 </header>
 
