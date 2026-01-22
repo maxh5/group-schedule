@@ -1,156 +1,3 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Week vertical gradient prototype</title>
-<style>
-  :root{
-    --col-gap: 12px;
-    --day-width: 120px;
-    --workday-start: 8; /* hour */
-    --workday-end: 20;  /* hour */
-    --canvas-height: 720px; /* px (maps to hours) */
-    --bg: #0f172a;
-    --card-bg: #0b1220;
-    --muted: #9aa7bf;
-  }
-  html,body{
-    height:100%;
-    margin:0;
-    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
-    background: linear-gradient(180deg,#07102a 0%, #071022 100%);
-    color:#e6eef8;
-    display:flex;
-    align-items:flex-start;
-    justify-content:center;
-    padding:28px;
-    box-sizing:border-box;
-  }
-
-  .container{
-    width: calc(var(--day-width) * 5 + var(--col-gap) * 4 + 40px);
-    background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
-    border-radius:12px;
-    padding:18px;
-    box-shadow: 0 8px 30px rgba(2,6,23,0.7);
-  }
-
-  .header{
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    gap:12px;
-    margin-bottom:12px;
-  }
-
-  .title{
-    font-weight:600;
-    font-size:18px;
-  }
-  .subtitle { color:var(--muted); font-size:13px; }
-
-  .week{
-    display:flex;
-    gap:var(--col-gap);
-  }
-
-  .day {
-    width:var(--day-width);
-    background: rgba(255,255,255,0.02);
-    border-radius:10px;
-    padding:10px;
-    box-sizing:border-box;
-    position:relative;
-  }
-
-  .day-label{
-    text-align:center;
-    font-weight:600;
-    margin-bottom:8px;
-    font-size:14px;
-  }
-
-  canvas {
-    width: 100%;
-    height: var(--canvas-height);
-    display:block;
-    border-radius:6px;
-    box-shadow: inset 0 0 18px rgba(0,0,0,0.35);
-    cursor: crosshair;
-  }
-
-  .time-column{
-    position:absolute;
-    right:-120px;
-    top:40px;
-    width:110px;
-    color:var(--muted);
-    font-size:12px;
-  }
-
-  .tooltip {
-    position:fixed;
-    pointer-events:none;
-    background: linear-gradient(180deg, rgba(18,28,46,0.95), rgba(10,14,22,0.95));
-    border:1px solid rgba(255,255,255,0.06);
-    padding:10px;
-    border-radius:8px;
-    font-size:13px;
-    color:#e6eef8;
-    min-width:160px;
-    box-shadow: 0 10px 30px rgba(2,6,23,0.6);
-    z-index: 9999;
-    transform: translate(12px, -12px);
-    display:none;
-  }
-
-  .tooltip .time { font-weight:700; margin-bottom:6px; display:block; }
-  .attendee { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
-  .dot { width:10px; height:10px; border-radius:50%; flex:0 0 10px; }
-  .muted { color:var(--muted); font-size:12px; }
-
-  .legend {
-    display:flex;
-    gap:8px;
-    align-items:center;
-    margin-left:auto;
-    font-size:12px;
-    color:var(--muted);
-  }
-
-  .legend .swatch{
-    width:12px;height:12px;border-radius:3px;background:linear-gradient(90deg,#8ae1ff,#0077ff);box-shadow:0 1px 0 rgba(0,0,0,0.4);
-  }
-
-  @media(max-width:900px){
-    :root { --day-width: 92px; --canvas-height:520px; }
-    .container{ width: 100%; }
-  }
-</style>
-</head>
-<body>
-  <div class="container" role="application" aria-label="Weekly availability prototype">
-    <div class="header">
-      <div>
-        <div class="title">Weekly Availability — hover a column</div>
-        <div class="subtitle">Vertical gradient = how many people are busy at that minute</div>
-      </div>
-      <div class="legend" aria-hidden="true">
-        <div class="swatch"></div>
-        <div class="muted">more busy →</div>
-      </div>
-    </div>
-
-    <div class="week" id="week"></div>
-  </div>
-
-  <div id="tooltip" class="tooltip" role="dialog" aria-hidden="true">
-    <span class="time" id="tooltip-time">08:00</span>
-    <div id="tooltip-list"><span class="muted">No one in class</span></div>
-  </div>
-
-<script>
 /* =========================
    Configuration / sample data
    ========================= */
@@ -200,13 +47,16 @@ function hhmmToMinutes(hhmm){
 function minutesToHHMM(min){
   const h = Math.floor(min/60);
   const m = min%60;
-  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+  const period = h >= 12 ? 'PM' : 'AM';
+  const hour12 = h % 12 || 12;
+  return `${hour12}:${String(m).padStart(2,'0')} ${period}`;
 }
 
 /* =========================
    Build DOM for week
    ========================= */
-const weekEl = document.getElementById('week');
+const daysEl = document.getElementById('days');
+const timeColumnEl = document.getElementById('time-column');
 CFG.days.forEach((d, idx) => {
   const dayEl = document.createElement('div');
   dayEl.className = 'day';
@@ -215,8 +65,24 @@ CFG.days.forEach((d, idx) => {
     <div class="day-label">${d}</div>
     <canvas id="canvas-${idx}" width="${CFG.dayWidth}" height="${CFG.canvasHeightPx}" aria-label="${d} availability canvas"></canvas>
   `;
-  weekEl.appendChild(dayEl);
+  daysEl.appendChild(dayEl);
 });
+
+// Add time labels to time column
+for(let hour = CFG.workStartHour; hour <= CFG.workEndHour; hour++){
+  const timeEl = document.createElement('div');
+  const period = hour >= 12 ? 'PM' : 'AM';
+  const hour12 = hour % 12 || 12;
+  timeEl.textContent = `${hour12} ${period}`;
+  timeEl.style.fontSize = '12px';
+  timeEl.style.color = 'var(--muted)';
+  timeEl.style.textAlign = 'right';
+  timeEl.style.paddingRight = '8px';
+  timeEl.style.position = 'absolute';
+  const y = 32 + (hour - CFG.workStartHour) * 60;
+  timeEl.style.top = y + 'px';
+  timeColumnEl.appendChild(timeEl);
+}
 
 /* Map people by id for easy lookup */
 const peopleById = {};
@@ -270,17 +136,17 @@ function drawDayGradient(dayIndex){
   // Determine max concurrent count for color scale
   const maxCount = Math.max(1, ...counts);
 
-  // Color mapping: we'll map count 0..maxCount to a color ramp (light blue -> deep blue)
+  // Color mapping: we'll map count 0..maxCount to a color ramp (light green -> deep green)
   // Function returns [r,g,b,a]
   function colorForCount(c){
-    if (c === 0) return [6,10,23,255]; // near background
-    // Interpolate between base (sky) and deep (blue)
+    if (c === 0) return [240,255,240,40]; // light green
+    // Interpolate between light and deep
     // t from 0..1
     const t = Math.min(1, c / maxCount);
     // base RGB anchors
-    const r = Math.round(10 + (0 - 10) * t + (120 * 0)); // keep subtle
-    const g = Math.round(20 + (120 - 20) * t);
-    const b = Math.round(40 + (220 - 40) * t);
+    const r = Math.round(240 + (0 - 240) * t);
+    const g = Math.round(255 + (100 - 255) * t);
+    const b = Math.round(240 + (0 - 240) * t);
     // Add alpha ramp so low counts are faint
     const a = Math.round(40 + (220 - 40) * t);
     return [r,g,b,a];
@@ -305,12 +171,10 @@ function drawDayGradient(dayIndex){
 
   ctx.putImageData(image, 0, 0);
 
-  // Add subtle horizontal hour lines and labels
+  // Add subtle horizontal hour lines
   ctx.globalCompositeOperation = 'source-over';
   ctx.strokeStyle = 'rgba(255,255,255,0.04)';
-  ctx.fillStyle = 'rgba(255,255,255,0.75)';
   ctx.lineWidth = 1;
-  ctx.font = '10px Inter, Arial';
   for(let hour = CFG.workStartHour; hour <= CFG.workEndHour; hour++){
     const minuteIndex = (hour*60) - startMin;
     if (minuteIndex < 0 || minuteIndex > totalMins) continue;
@@ -319,9 +183,6 @@ function drawDayGradient(dayIndex){
     ctx.moveTo(2, y+0.5);
     ctx.lineTo(w-2, y+0.5);
     ctx.stroke();
-    // label left small hour marks (e.g., 08:00)
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    ctx.fillText(String(hour).padStart(2,'0') + ":00", 6, y + 9);
   }
 
   // Return the per-minute people array to use for hover lookups
@@ -449,6 +310,3 @@ window.CalendarPrototype = {
 };
 
 /* End prototype */
-</script>
-</body>
-</html>

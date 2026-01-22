@@ -1,341 +1,41 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Prototype — Vertical Time Axis (Mon–Fri)</title>
+{% extends "base.html" %}
 
-  <style>
-    :root{
-      --bg: #071427;
-      --panel: #071827;
-      --muted: #93a3b3;
-      --accent-contrast: 255 255 255;
-      --time-start: 7;   /* visible start hour */
-      --time-end: 22;    /* visible end hour */
-      --hours: calc(var(--time-end) - var(--time-start));
-      --col-gap: 12px;
-      --day-col-min: 160px;
-      --row-height: 40px; /* base hour height multiplier: actual height = hours * row-height */
-      --max-overlap-offset: 24px; /* how much each overlapping event is nudged horizontally */
-    }
+{% block title %}Calendar View{% endblock %}
 
-    html,body{height:100%;margin:0;background:linear-gradient(180deg,#041226 0%, #031021 100%);color:#e6eef6;font-family:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;}
-    .wrap{max-width:1200px;margin:28px auto;padding:20px;border-radius:12px;}
-    header{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;margin-bottom:12px}
-    h1{margin:0;font-size:20px;font-weight:600}
-    p.lead{margin:0;color:var(--muted);font-size:0.95rem}
+{% block content %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/calendar.css') }}">
+<script src="{{ url_for('static', filename='js/calendar.js') }}" defer></script>
 
-    /* Grid layout: left time gutter + 5 day columns */
-    .calendar {
-      display: grid;
-      grid-template-columns: 72px 1fr 1fr 1fr 1fr 1fr;
-      gap: var(--col-gap);
-      align-items: start;
-    }
-
-    /* Time gutter */
-    .time-gutter {
-      position: relative;
-      padding-top: 8px;
-    }
-    .time-tick {
-      height: calc(var(--row-height)); /* one hour tall */
-      color: var(--muted);
-      font-size: 12px;
-      display: flex;
-      align-items: flex-start;
-      padding-top: 2px;
-      box-sizing: border-box;
-    }
-    .time-tick .label { padding-left: 6px; white-space:nowrap; }
-
-    /* Day column cards */
-    .day-col {
-      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(0,0,0,0.02));
-      border-radius: 10px;
-      padding: 8px;
-      position: relative;
-      min-height: calc(var(--hours) * var(--row-height) + 16px);
-      overflow: visible;
-      box-shadow: 0 6px 20px rgba(2,6,23,0.6);
-    }
-
-    .day-header {
-      font-weight:700;
-      font-size:14px;
-      margin-bottom:8px;
-      display:flex;
-      justify-content:space-between;
-      align-items:center;
-      color: #eaf2ff;
-    }
-    .day-sub { color:var(--muted); font-weight:500; font-size:12px; }
-
-    /* Grid lines (hour separators) */
-    .grid-lines {
-      position:absolute;
-      left:0; right:0;
-      top:40px; /* leaves space for header area */
-      bottom:8px;
-      pointer-events:none;
-    }
-    .grid-line {
-      height: calc(var(--row-height) - 1px);
-      border-top: 1px dashed rgba(255,255,255,0.03);
-      box-sizing:border-box;
-    }
-
-    /* Event blocks — positioned vertically by top% and height% inside day column */
-    .event {
-      position: absolute;
-      left: 8px; /* base left; overlaps will nudge this */
-      right: 8px;
-      border-radius: 8px;
-      padding: 6px 8px;
-      color: white;
-      font-weight:600;
-      font-size:12px;
-      box-shadow: 0 8px 22px rgba(2,6,23,0.6);
-      overflow: hidden;
-      white-space: nowrap;
-      text-overflow: ellipsis;
-      display:flex;
-      align-items:center;
-      gap:8px;
-    }
-    .event .initials {
-      width:28px;height:28px;border-radius:6px;flex:0 0 28px;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;background:rgba(255,255,255,0.12)
-    }
-    .event .meta { font-size:11px; opacity:0.95; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-
-    /* small time chip on right */
-    .event .time {
-      margin-left:auto;
-      font-size:11px;
-      padding:4px 6px;
-      border-radius:6px;
-      background: rgba(255,255,255,0.06);
-      color: #fff;
-      font-weight:700;
-    }
-
-    /* Overlap nudging: we will apply inline style transform to shift horizontally */
-    /* Legend and footer */
-    .legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:18px;color:var(--muted);font-size:13px}
-    .legend-item{display:flex;gap:8px;align-items:center}
-    .swatch{width:14px;height:14px;border-radius:4px;box-shadow:0 2px 6px rgba(0,0,0,0.45)}
-
-    /* responsive */
-    @media (max-width:980px){
-      .calendar{grid-template-columns: 56px 1fr 1fr 1fr 1fr 1fr}
-    }
-    @media (max-width:640px){
-      .calendar{grid-template-columns: 48px 1fr 1fr 1fr 1fr 1fr; gap:8px}
-      :root{--row-height:32px}
-      .event .initials{width:22px;height:22px;font-size:11px}
-    }
-  </style>
-</head>
-<body>
-  <div class="wrap" role="main" aria-label="Week view with vertical time axis">
-    <header>
+<div class="container" role="application" aria-label="Weekly availability prototype">
+    <div class="header">
       <div>
-        <h1>Week (Mon–Fri) — Time vertically</h1>
-        <p class="lead">Time runs top→bottom. Days are columns. Visual-only prototype for groups.</p>
+        <div class="title">Weekly Availability — hover a column</div>
+        <div class="subtitle">Vertical gradient = how many people are busy at that minute</div>
       </div>
-      <div style="text-align:right">
-        <div style="color:var(--muted);font-size:13px">Visible hours: 07:00 — 22:00</div>
-      </div>
-    </header>
-
-    <div class="calendar" aria-hidden="false">
-      <!-- Time gutter (left column): show ticks from 07:00 to 22:00 -->
-      <div class="time-gutter" aria-hidden="true">
-        <!-- Empty header gap to align with day headers -->
-        <div style="height:36px"></div>
-        <!-- Ticks -->
-        <!-- We'll render 15 ticks (7..22) -->
-        <div class="time-tick"><span class="label">07:00</span></div>
-        <div class="time-tick"><span class="label">08:00</span></div>
-        <div class="time-tick"><span class="label">09:00</span></div>
-        <div class="time-tick"><span class="label">10:00</span></div>
-        <div class="time-tick"><span class="label">11:00</span></div>
-        <div class="time-tick"><span class="label">12:00</span></div>
-        <div class="time-tick"><span class="label">13:00</span></div>
-        <div class="time-tick"><span class="label">14:00</span></div>
-        <div class="time-tick"><span class="label">15:00</span></div>
-        <div class="time-tick"><span class="label">16:00</span></div>
-        <div class="time-tick"><span class="label">17:00</span></div>
-        <div class="time-tick"><span class="label">18:00</span></div>
-        <div class="time-tick"><span class="label">19:00</span></div>
-        <div class="time-tick"><span class="label">20:00</span></div>
-        <div class="time-tick"><span class="label">21:00</span></div>
-        <div class="time-tick"><span class="label">22:00</span></div>
-      </div>
-
-      <!-- Day columns: MON-FRI -->
-      <!-- NOTE: this is static visual mock data. The event blocks are absolutely positioned using top/height %
-           where 0% corresponds to 07:00 and 100% corresponds to 22:00. -->
-
-      <!-- Monday -->
-      <div class="day-col" aria-label="Monday">
-        <div class="day-header">Mon <span class="day-sub">Jan 12</span></div>
-        <div class="grid-lines" aria-hidden="true">
-          <!-- hour grid: number of .grid-line elements should equal hours; using 15 to cover 07..22 -->
-          <!-- We'll let CSS height handle spacing -->
-          <div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div>
-          <div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div>
-          <div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div>
-          <div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div>
-        </div>
-
-        <!-- Events: top% = ((start_hour - 7) / 15) * 100  ; height% = ((end-start)/15)*100 -->
-        <div class="event" style="top:6%; height:10%; background:linear-gradient(180deg,#d9534f,#b73a3a); transform: translateX(0px);" title="Design review — 08:15–09:45">
-          <div class="initials">AT</div>
-          <div class="meta">Design review</div>
-          <div class="time">08:15–09:45</div>
-        </div>
-
-        <div class="event" style="top:45%; height:12%; background:linear-gradient(180deg,#1f78b4,#15536e); transform: translateX(6px);" title="Deploy — 12:30–15:00">
-          <div class="initials">BC</div>
-          <div class="meta">Deploy</div>
-          <div class="time">12:30–15:00</div>
-        </div>
-
-        <div class="event" style="top:64%; height:8%; background:linear-gradient(180deg,#f6b042,#d18f26); transform: translateX(12px);" title="All-hands — 16:30–18:00">
-          <div class="initials">CP</div>
-          <div class="meta">All-hands</div>
-          <div class="time">16:30–18:00</div>
-        </div>
-      </div>
-
-      <!-- Tuesday -->
-      <div class="day-col" aria-label="Tuesday">
-        <div class="day-header">Tue <span class="day-sub">Jan 13</span></div>
-        <div class="grid-lines" aria-hidden="true">
-          <div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div>
-          <div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div>
-          <div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div>
-          <div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div>
-        </div>
-
-        <div class="event" style="top:2%; height:6%; background:linear-gradient(180deg,#8dd3c7,#60a99a); transform: translateX(0px);" title="On-call handoff — 07:15–08:00">
-          <div class="initials">EL</div>
-          <div class="meta">Handoff</div>
-          <div class="time">07:15–08:00</div>
-        </div>
-
-        <div class="event" style="top:20%; height:22%; background:linear-gradient(180deg,#6a3d9a,#4b296f); transform: translateX(6px);" title="Model training — 10:00–15:00">
-          <div class="initials">FN</div>
-          <div class="meta">Training</div>
-          <div class="time">10:00–15:00</div>
-        </div>
-
-        <div class="event" style="top:54%; height:9%; background:linear-gradient(180deg,#ff7f00,#c85b00); transform: translateX(12px);" title="PR reviews — 15:30–17:00">
-          <div class="initials">BC</div>
-          <div class="meta">PR reviews</div>
-          <div class="time">15:30–17:00</div>
-        </div>
-      </div>
-
-      <!-- Wednesday -->
-      <div class="day-col" aria-label="Wednesday">
-        <div class="day-header">Wed <span class="day-sub">Jan 14</span></div>
-        <div class="grid-lines" aria-hidden="true">
-          <div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div>
-          <div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div>
-          <div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div>
-          <div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div>
-        </div>
-
-        <div class="event" style="top:12%; height:14%; background:linear-gradient(180deg,#ef5675,#c63b56); transform: translateX(0px);" title="Roadmap — 09:00–12:00">
-          <div class="initials">CP</div>
-          <div class="meta">Roadmap</div>
-          <div class="time">09:00–12:00</div>
-        </div>
-
-        <div class="event" style="top:38%; height:10%; background:linear-gradient(180deg,#66c2a5,#2f8f74); transform: translateX(6px);" title="Sprint planning — 12:00–14:30">
-          <div class="initials">AT</div>
-          <div class="meta">Sprint planning</div>
-          <div class="time">12:00–14:30</div>
-        </div>
-
-        <div class="event" style="top:70%; height:20%; background:linear-gradient(180deg,#1f78b4,#15536e); transform: translateX(12px);" title="Interviews — 17:00–21:00">
-          <div class="initials">CP</div>
-          <div class="meta">Interviews</div>
-          <div class="time">17:00–21:00</div>
-        </div>
-      </div>
-
-      <!-- Thursday -->
-      <div class="day-col" aria-label="Thursday">
-        <div class="day-header">Thu <span class="day-sub">Jan 15</span></div>
-        <div class="grid-lines" aria-hidden="true">
-          <div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div>
-          <div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div>
-          <div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div>
-          <div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div>
-        </div>
-
-        <div class="event" style="top:8%; height:12%; background:linear-gradient(180deg,#fb9a99,#d76e73); transform: translateX(0px);" title="Mockups — 08:30–11:00">
-          <div class="initials">GR</div>
-          <div class="meta">Mockups</div>
-          <div class="time">08:30–11:00</div>
-        </div>
-
-        <div class="event" style="top:28%; height:26%; background:linear-gradient(180deg,#ffd92f,#d1aa1f); transform: translateX(6px);" title="Database work — 10:30–17:30">
-          <div class="initials">BC</div>
-          <div class="meta">DB work</div>
-          <div class="time">10:30–17:30</div>
-        </div>
-
-        <div class="event" style="top:64%; height:9%; background:linear-gradient(180deg,#8dd3c7,#60a99a); transform: translateX(12px);" title="User interviews — 16:30–18:00">
-          <div class="initials">CP</div>
-          <div class="meta">Interviews</div>
-          <div class="time">16:30–18:00</div>
-        </div>
-      </div>
-
-      <!-- Friday -->
-      <div class="day-col" aria-label="Friday">
-        <div class="day-header">Fri <span class="day-sub">Jan 16</span></div>
-        <div class="grid-lines" aria-hidden="true">
-          <div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div>
-          <div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div>
-          <div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div>
-          <div class="grid-line"></div><div class="grid-line"></div><div class="grid-line"></div>
-        </div>
-
-        <div class="event" style="top:0.5%; height:7%; background:linear-gradient(180deg,#a6cee3,#6aa7d1); transform: translateX(0px);" title="Shift — 07:00–08:00">
-          <div class="initials">IZ</div>
-          <div class="meta">Shift</div>
-          <div class="time">07:00–08:00</div>
-        </div>
-
-        <div class="event" style="top:32%; height:14%; background:linear-gradient(180deg,#b2df8a,#86c45d); transform: translateX(6px);" title="Weekly sync — 12:00–15:00">
-          <div class="initials">FN</div>
-          <div class="meta">Weekly sync</div>
-          <div class="time">12:00–15:00</div>
-        </div>
-
-        <div class="event" style="top:66%; height:12%; background:linear-gradient(180deg,#fdb462,#e0872b); transform: translateX(12px);" title="Dashboard work — 17:00–19:00">
-          <div class="initials">JP</div>
-          <div class="meta">Dashboards</div>
-          <div class="time">17:00–19:00</div>
-        </div>
+      <div class="legend" aria-hidden="true">
+        <div class="swatch"></div>
+        <div class="muted">more busy →</div>
       </div>
     </div>
 
-    <!-- Legend -->
-    <div class="legend" role="note" aria-label="Legend">
-      <div class="legend-item"><div class="swatch" style="background:hsl(12 78% 52%)"></div>Ava (Design)</div>
-      <div class="legend-item"><div class="swatch" style="background:hsl(210 75% 50%)"></div>Ben (Backend)</div>
-      <div class="legend-item"><div class="swatch" style="background:hsl(45 85% 52%)"></div>Chloe (PM)</div>
-      <div class="legend-item"><div class="swatch" style="background:hsl(330 75% 52%)"></div>Diego (Mobile)</div>
-      <div class="legend-item"><div class="swatch" style="background:hsl(160 70% 44%)"></div>Ethan (SRE)</div>
-      <div style="color:var(--muted);margin-left:auto;font-size:13px">Prototype — static visuals only</div>
+    <div class="week">
+      <div class="time-column" id="time-column"></div>
+      <div class="days" id="days"></div>
     </div>
   </div>
-</body>
-</html>
+
+  <div id="tooltip" class="tooltip" role="dialog" aria-hidden="true">
+    <span class="time" id="tooltip-time">08:00</span>
+    <div id="tooltip-list"><span class="muted">No one in class</span></div>
+  </div>
+
+<script>
+  // Initialize with data from Flask
+  const people = {{ people | tojson }};
+  const events = {{ events | tojson }};
+  // Assuming the JS has a way to set data
+  if (window.CalendarPrototype) {
+    window.CalendarPrototype.redraw(events, people);
+  }
+</script>
+{% endblock %}

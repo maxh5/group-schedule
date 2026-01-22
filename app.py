@@ -65,7 +65,35 @@ def view2():
 
 @app.route('/view3', methods=['GET'])
 def view3():
-    return render_template('view3.html')
+    # Sample data for now
+    people = [
+        {"id": "p1", "name": "Aisha", "color": "#FF8A80"},
+        {"id": "p2", "name": "Ben", "color": "#FFD180"},
+        {"id": "p3", "name": "Carmen", "color": "#FFFF8D"},
+        {"id": "p4", "name": "Diego", "color": "#B9F6CA"},
+        {"id": "p5", "name": "Eve", "color": "#80D8FF"},
+        {"id": "p6", "name": "Farah", "color": "#B388FF"},
+        {"id": "p7", "name": "Gus", "color": "#CFD8DC"}
+    ]
+    events = [
+        {"day": 0, "start": "08:00", "end": "09:50", "person": "p1"},
+        {"day": 0, "start": "09:30", "end": "11:00", "person": "p2"},
+        {"day": 0, "start": "10:45", "end": "12:15", "person": "p3"},
+        {"day": 0, "start": "11:30", "end": "13:00", "person": "p4"},
+        {"day": 0, "start": "15:00", "end": "16:30", "person": "p5"},
+        {"day": 1, "start": "08:30", "end": "10:10", "person": "p6"},
+        {"day": 1, "start": "09:00", "end": "12:00", "person": "p1"},
+        {"day": 1, "start": "11:50", "end": "13:20", "person": "p2"},
+        {"day": 2, "start": "08:00", "end": "09:00", "person": "p7"},
+        {"day": 2, "start": "09:15", "end": "10:45", "person": "p3"},
+        {"day": 2, "start": "10:00", "end": "11:00", "person": "p4"},
+        {"day": 3, "start": "12:00", "end": "14:00", "person": "p5"},
+        {"day": 3, "start": "13:30", "end": "15:00", "person": "p6"},
+        {"day": 4, "start": "08:00", "end": "11:30", "person": "p1"},
+        {"day": 4, "start": "10:00", "end": "12:00", "person": "p2"},
+        {"day": 4, "start": "11:20", "end": "13:30", "person": "p3"},
+    ]
+    return render_template('view3.html', people=people, events=events)
 
 @app.route('/view4', methods=['GET'])
 def view4():
