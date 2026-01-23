@@ -11,12 +11,21 @@ class User(db.Model, UserMixin):
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     first_name = db.Column(db.String(25), nullable=False)
     last_name = db.Column(db.String(50), nullable=False)
+    
+    username = db.Column(db.String(30), unique=True, nullable=False)
+    profile_image = db.Column(db.String(255), nullable=False, default='default.jpg')
+    is_active = db.Column(db.Boolean, default=True)
+
     password_hash = db.Column(db.String(255), nullable=False)
 
     # Relationships:
     saved_sections = db.relationship(
         "UserCourse", back_populates="user", cascade="all, delete-orphan"
     )
+
+    # Friendship helper (simple lookup)
+    # This is a bit complex in pure SQLAlchemy relationships for self-referential many-to-many 
+    # with an association object, so we might handle some logic in methods or properties.
 
     def __repr__(self):
         return f"<{self.full_name} (id={self.id})>"
@@ -32,8 +41,52 @@ class User(db.Model, UserMixin):
     
     @property
     def full_name(self) -> str:
-        return f"{self.first_name} {self.last_name}"
+        return f"{self.first_name} {self.last_name}"    
 
+class Friendship(db.Model):
+    """Tracks friend requests and accepted friendships"""
+    __tablename__ = "friendships"
+
+    id = db.Column(db.Integer, primary_key=True)
+    requester_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    receiver_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    status = db.Column(db.String(20), default="pending", nullable=False) # pending, accepted
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    # Relationships are tricky here. It's often easier to query manually or use db.relationship with foreign_keys
+    requester = db.relationship("User", foreign_keys=[requester_id], backref="sent_requests")
+    receiver = db.relationship("User", foreign_keys=[receiver_id], backref="received_requests")
+
+    __table_args__ = (UniqueConstraint("requester_id", "receiver_id", name="uq_friendship"),)
+
+
+class Group(db.Model):
+    """User groups for sharing schedules"""
+    __tablename__ = "groups"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), nullable=False)
+    description = db.Column(db.String(255), nullable=True)
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    members = db.relationship("GroupMember", back_populates="group", cascade="all, delete-orphan")
+
+
+class GroupMember(db.Model):
+    """Members of a group"""
+    __tablename__ = "group_members"
+
+    id = db.Column(db.Integer, primary_key=True)
+    group_id = db.Column(db.Integer, db.ForeignKey("groups.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    role = db.Column(db.String(20), default="member") # admin, member
+    joined_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    group = db.relationship("Group", back_populates="members")
+    user = db.relationship("User", backref="groups")
+
+    __table_args__ = (UniqueConstraint("group_id", "user_id", name="uq_group_member"),)
 
 class Course(db.Model):
     """Course itself"""

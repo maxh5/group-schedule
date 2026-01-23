@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% block title %}Friends{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">My Friends</h1>
+    <p class="page-subtitle">Connect with classmates to share schedules and plan study sessions.</p>
+</div>
+
+{# Flash Messages #}
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    {% for category, message in messages %}
+      <div class="flash flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+{% endwith %}
+
+<!-- Add Friend Section -->
+<div class="card" style="margin-bottom: 32px; padding: 20px;">
+    <h3 style="margin-top:0; font-size: 16px;">Add a Friend</h3>
+    <form method="post" style="display: flex; gap: 12px; margin-top: 12px;">
+        <input type="text" name="username" class="form-input" placeholder="Enter username (e.g. funnybunny22)" required style="flex: 1;">
+        <button type="submit" class="btn btn-primary">Send Request</button>
+    </form>
+</div>
+
+<!-- Pending Requests -->
+{% if requests %}
+<h3 class="section-title">Friend Requests <span class="badge">{{ requests|length }}</span></h3>
+<div class="card-grid">
+    {% for req in requests %}
+    <div class="card">
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+            <div class="user-avatar" style="width: 48px; height: 48px;">
+                <img src="{{ url_for('static', filename='profile_pics/' + req.requester.profile_image) }}" 
+                     alt="{{ req.requester.username }}"
+                     style="width: 100%; height: 100%; object-fit: cover;"
+                     onerror="this.src='https://ui-avatars.com/api/?name={{ req.requester.first_name }}+{{ req.requester.last_name }}&background=random'">
+            </div>
+            <div>
+                <div style="font-weight: 600;">{{ req.requester.full_name }}</div>
+                <div style="font-size: 12px; color: var(--muted);">@{{ req.requester.username }}</div>
+            </div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <a href="{{ url_for('friend_respond', request_id=req.id, action='accept') }}" class="btn btn-primary" style="justify-content: center;">Accept</a>
+            <a href="{{ url_for('friend_respond', request_id=req.id, action='decline') }}" class="btn" style="background: #f1f5f9; color: #64748b; justify-content: center;">Decline</a>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Friends List -->
+<h3 class="section-title" style="margin-top: 32px;">Your Friends</h3>
+{% if friends %}
+<div class="card-grid">
+    {% for friend in friends %}
+    <div class="card" style="text-align: center; align-items: center; display: flex; flex-direction: column; position: relative;">
+        <form action="{{ url_for('remove_friend', friend_id=friend.id) }}" method="post" onsubmit="return confirm('Remove friend?');" style="position: absolute; top: 12px; right: 12px;">
+            <button type="submit" style="background: none; border: none; padding: 4px; cursor: pointer; color: #cbd5e1; transition: color 0.2s;" title="Remove Friend" onmouseover="this.style.color='#ef4444'" onmouseout="this.style.color='#cbd5e1'">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="8" y1="12" x2="16" y2="12"></line></svg>
+            </button>
+        </form>
+
+        <div class="user-avatar" style="width: 64px; height: 64px; margin-bottom: 12px;">
+             <img src="{{ url_for('static', filename='profile_pics/' + friend.profile_image) }}" 
+                  alt="{{ friend.username }}"
+                  style="width: 100%; height: 100%; object-fit: cover;"
+                  onerror="this.src='https://ui-avatars.com/api/?name={{ friend.first_name }}+{{ friend.last_name }}&background=random'">
+        </div>
+        <div style="font-weight: 600; font-size: 16px;">{{ friend.full_name }}</div>
+        <div style="font-size: 13px; color: var(--muted); margin-bottom: 16px;">@{{ friend.username }}</div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <p style="color: var(--muted);">You haven't added any friends yet.</p>
+</div>
+{% endif %}
+
+{% endblock %}

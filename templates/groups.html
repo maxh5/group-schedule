@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+
+{% block title %}My Groups{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            <h1 class="page-title">My Groups</h1>
+            <p class="page-subtitle">Collaborate with study groups and project teams.</p>
+        </div>
+        <!-- Trigger Modal could go here, for now just inline form below -->
+    </div>
+</div>
+
+{# Flash Messages #}
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    {% for category, message in messages %}
+      <div class="flash flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+{% endwith %}
+
+<div class="card-grid">
+    <!-- Create Group Card (Always first) -->
+    <div class="card" style="border: 2px dashed #cbd5e1; background: transparent; display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 200px;">
+        <h3 style="margin: 0 0 16px;">Create New Group</h3>
+        <form method="post" style="width: 100%;">
+            <input type="text" name="name" class="form-input" placeholder="Group Name" required style="margin-bottom: 8px;">
+            <input type="text" name="description" class="form-input" placeholder="Description (Optional)" style="margin-bottom: 12px;">
+            <button type="submit" class="btn btn-primary" style="width: 100%; justify-content: center;">Create Group</button>
+        </form>
+    </div>
+
+    <!-- Existing Groups -->
+    {% for group in groups %}
+    <a href="{{ url_for('view_group', group_id=group.id) }}" class="card action-card" style="text-decoration: none; color: inherit; transition: transform 0.2s; display: block; position: relative;">
+        <!-- Hover overlay or arrow icon for affordance -->
+        <div style="position: absolute; top: 20px; right: 20px; color: #cbd5e1;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><path d="M12 5l7 7-7 7"></path></svg>
+        </div>
+
+        <h3 style="margin: 8px 0 8px 0; font-size: 18px; padding-right: 24px;">{{ group.name }}</h3>
+        <p style="color: var(--muted); font-size: 13px; margin: 0 0 16px; line-height: 1.4;">
+            {{ group.description or "No description provided." }}
+        </p>
+        <div style="margin-top: auto; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+            {{ group.members|length }} Members
+        </div>
+    </a>
+    {% endfor %}
+</div>
+
+{% endblock %}

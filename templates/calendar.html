@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+
+{% block title %}Calendar View{% endblock %}
+
+{% block main_class %}no-scroll{% endblock %}
+
+{% block extra_head %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/calendar.css') }}">
+<script src="{{ url_for('static', filename='js/calendar.js') }}" defer></script>
+{% endblock %}
+
+{% block content %}
+
+<div class="container" role="application" aria-label="Weekly availability prototype">
+    <div class="header">
+      <div class="header-top">
+        <div class="title-group">
+          <div class="title">Weekly Availability</div>
+        </div>
+        
+        <span class="date-range" id="date-range-display">Loading...</span>
+      </div>
+    </div>
+
+    <div class="week">
+      <div class="time-column" id="time-column"></div>
+      <div class="days" id="days"></div>
+    </div>
+  </div>
+
+  <div id="tooltip" class="tooltip" role="dialog" aria-hidden="true">
+    <span class="time" id="tooltip-time">08:00</span>
+    <div id="tooltip-list"><span class="muted">No one in class</span></div>
+  </div>
+
+<script>
+  // Initialize with data from Flask
+  const ALL_PEOPLE = {{ people | tojson }};
+  const ALL_EVENTS = {{ events | tojson }};
+  const FRIENDS_IDS = {{ friends_ids | tojson }};
+  const CURRENT_USER_ID = {{ current_user_id | tojson }};
+  
+  // Initial Load: Show only ME
+  function getActiveFilters() {
+     const showMe = document.getElementById('filter-me').checked;
+     const showFriends = document.getElementById('filter-friends-all').checked;
+     
+     // Collect active group IDs
+     const activeGroupIds = [];
+     document.querySelectorAll('.group-checkbox:checked').forEach(cb => {
+         // cb.dataset.members is array of user ids
+         activeGroupIds.push(JSON.parse(cb.dataset.members));
+     });
+
+     // Build set of visible user IDs
+     const visibleUserIds = new Set();
+     if (showMe) visibleUserIds.add(CURRENT_USER_ID);
+     if (showFriends) {
+         FRIENDS_IDS.forEach(id => visibleUserIds.add(id));
+     }
+     activeGroupIds.forEach(members => {
+         members.forEach(id => visibleUserIds.add(id));
+     });
+     
+     return visibleUserIds;
+  }
+
+  function updateCalendar() {
+      if (!window.CalendarPrototype) return;
+      
+      const visibleIds = getActiveFilters();
+      
+      // Filter People
+      const filteredPeople = ALL_PEOPLE.filter(p => visibleIds.has(p.id));
+      
+      // Filter Events
+      const filteredEvents = ALL_EVENTS.filter(e => visibleIds.has(e.person));
+      
+      window.CalendarPrototype.redraw(filteredEvents, filteredPeople);
+  }
+
+  // Attach listeners after DOM load
+  document.addEventListener('DOMContentLoaded', () => {
+     // Initial draw
+     updateCalendar();
+  });
+</script>
+{% endblock %}
+
+{% block right_sidebar %}
+<aside class="right-sidebar">
+    <div class="sidebar-section">
+        <div class="sidebar-header-text">Navigation</div>
+        <button id="btn-today" class="sidebar-btn text-only" title="Jump to Today">Today</button>
+        <div class="control-group">
+            <button id="btn-prev" class="sidebar-btn small" title="Previous Week">
+                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <button id="btn-next" class="sidebar-btn small" title="Next Week">
+                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+            </button>
+        </div>
+
+         <!-- Time Selectors -->
+         <div class="time-group" style="margin-top: 12px;">
+             <div class="time-input-wrapper">
+                  <select id="start-time" class="time-select-mini"></select>
+             </div>
+             <div class="time-icon">
+                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
+             </div>
+             <div class="time-input-wrapper">
+                  <select id="end-time" class="time-select-mini"></select>
+             </div>
+         </div>
+
+         <!-- Weekend Toggle -->
+         <label class="toggle-switch vertical" title="Toggle Weekends">
+             <input type="checkbox" id="weekend-toggle">
+             <span class="slider"></span>
+             <span class="label-text">SAT & SUN</span>
+         </label>
+    </div>
+
+    <div class="divider-h" style="width: 100%;"></div>
+
+    <div class="sidebar-section" style="flex: 1; min-height: 0; overflow: hidden;">
+        <div class="sidebar-header-text">Schedules</div>
+        
+        <!-- Icon Toggles For Me/Friends -->
+        <div style="display: flex; gap: 8px; justify-content: center; margin-bottom: 4px;">
+            <!-- Me Toggle -->
+            <label title="Me" style="cursor: pointer; position: relative;">
+                <input type="checkbox" id="filter-me" checked onchange="updateCalendar()" style="position: absolute; opacity: 0; width: 0; height: 0;" class="icon-checkbox">
+                <div class="icon-toggle" style="width: 32px; height: 32px; border-radius: 8px; background: #f1f5f9; color: #64748b; display: flex; align-items: center; justify-content: center; transition: all 0.2s; border: 2px solid transparent;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                </div>
+            </label>
+
+            <!-- Friends Toggle -->
+            <label title="All Friends" style="cursor: pointer; position: relative;">
+                <input type="checkbox" id="filter-friends-all" onchange="updateCalendar()" style="position: absolute; opacity: 0; width: 0; height: 0;" class="icon-checkbox">
+                <div class="icon-toggle" style="width: 32px; height: 32px; border-radius: 8px; background: #f1f5f9; color: #64748b; display: flex; align-items: center; justify-content: center; transition: all 0.2s; border: 2px solid transparent;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                </div>
+            </label>
+        </div>
+
+        <style>
+            .icon-checkbox:checked + .icon-toggle {
+                background: #dbeafe; /* Blue-100 */
+                color: #2563eb;    /* Blue-600 */
+                border-color: #bfdbfe;
+            }
+            .icon-checkbox:hover + .icon-toggle {
+                background: #e2e8f0;
+            }
+            .icon-checkbox:checked:hover + .icon-toggle {
+                background: #bfdbfe;
+            }
+        </style>
+
+        {% if groups %}
+        <div style="margin-top: 12px; width: 100%; display: flex; flex-direction: column; min-height: 0; flex: 1;">
+            <div style="font-size: 10px; text-transform: uppercase; color: #94a3b8; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 8px; text-align: center; flex-shrink: 0;">Groups</div>
+            
+            <!-- Compact Circle Toggles -->
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; overflow-y: auto; flex: 1; min-height: 0; align-content: flex-start;">
+                {% for g in groups %}
+                <label title="{{ g.name }}" style="cursor: pointer; position: relative;">
+                    <input type="checkbox" class="group-checkbox" data-members="{{ g.members | tojson }}" onchange="updateCalendar()" style="position: absolute; opacity: 0; width: 0; height: 0;">
+                    
+                    <!-- Visual Circle -->
+                    <div class="group-circle-toggle" style="width: 34px; height: 34px; border-radius: 50%; background: #f1f5f9; color: #64748b; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; border: 2px solid transparent; transition: all 0.2s;">
+                        {{ g.name[:2] | upper }}
+                    </div>
+                </label>
+                {% endfor %}
+            </div>
+
+            <style>
+                .group-checkbox:checked + .group-circle-toggle {
+                    background: #dbeafe; /* Blue-100 */
+                    color: #2563eb;    /* Blue-600 */
+                    border-color: #bfdbfe;
+                }
+                .group-checkbox:hover + .group-circle-toggle {
+                    background: #e2e8f0;
+                }
+                .group-checkbox:checked:hover + .group-circle-toggle {
+                    background: #bfdbfe;
+                }
+            </style>
+        </div>
+        {% endif %}
+    </div>
+</aside>
+{% endblock %}
