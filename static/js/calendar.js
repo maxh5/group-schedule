@@ -156,22 +156,22 @@ function drawDayGradient(dayIndex){
     // Calculate combined count and intensity relative to the day's maximum
     const combinedC = userC + otherC;
     const combinedIntensity = Math.min(1, combinedC / maxCount);
-    const t = combinedIntensity;
+    // Apply a softer easing curve for more gradual tapering
+    const t = Math.pow(combinedIntensity, 0.7);
     
     if (showMe && userC > 0) {
       // User is busy - always show blue (even if others are also busy)
       const r = Math.round(240 + (30 - 240) * t);  // Light blue to deep blue
       const g = Math.round(248 + (144 - 248) * t);
       const b = Math.round(255 + (255 - 255) * t);
-      const a = Math.round(40 + (220 - 40) * t);
+      const a = Math.round(40 + (180 - 40) * t);
       return [r,g,b,a];
     } else {
       // Only others busy (or Me not active) - green gradient
-      const t = combinedIntensity;
       const r = Math.round(240 + (0 - 240) * t);
       const g = Math.round(255 + (100 - 255) * t);
       const b = Math.round(240 + (0 - 240) * t);
-      const a = Math.round(40 + (220 - 40) * t);
+      const a = Math.round(40 + (180 - 40) * t);
       return [r,g,b,a];
     }
   }
