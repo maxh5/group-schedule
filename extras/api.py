@@ -1,4 +1,5 @@
 import os
+import re
 import requests
 from datetime import datetime
 
@@ -32,6 +33,20 @@ def fetch_class_by_section(section_id):
             return item
     return None
 
+def clean_daylist(daylist):
+    """Remove HTML tags/entities from DAYLIST field and format as 'M T Th'."""
+    if not daylist:
+        return ""
+    # Remove HTML tags and entities
+    cleaned = re.sub(r'<[^>]+>', '', daylist)  # Remove tags like <br/>
+    cleaned = re.sub(r'&[a-z]+;', '', cleaned)  # Remove entities like &nbsp;
+    cleaned = cleaned.strip()
+    
+    # Parse day abbreviations: M, T, W, Th, F
+    # Use regex to find day patterns (Th is two chars, others are one)
+    days = re.findall(r'Th|[MTWF]', cleaned)
+    return ' '.join(days)
+
 def parse_class_item(item):
     """Parse a raw ASU class API item into a normalized dict."""
     clas = item.get("CLAS", {}) # Most things are stored inside this sub-dict
@@ -41,7 +56,7 @@ def parse_class_item(item):
         "asu_section_id": clas.get("CLASSNBR", ""),
         "term": clas.get("STRM", ""),
         "location": clas.get("DESCR1", ""),
-        "days_of_week": clas.get("DAYLIST", ""),
+        "days_of_week": clean_daylist(clas.get("DAYLIST", "")),
         "start_time": parse_time(clas.get("STARTTIME")),
         "end_time": parse_time(clas.get("ENDTIME")),
         "start_date": datetime.fromisoformat(clas.get("STARTDATE", "")).date(),
@@ -51,5 +66,9 @@ def parse_class_item(item):
 
 def parse_time(value):
     if not value: return None
-    try: return datetime.strptime(value, "%I:%M %p").time()
+    # Clean HTML tags and entities (similar to clean_daylist)
+    cleaned = re.sub(r'<[^>]+>', '', value)
+    cleaned = re.sub(r'&[a-z]+;', '', cleaned)
+    cleaned = cleaned.strip()
+    try: return datetime.strptime(cleaned, "%I:%M %p").time()
     except ValueError: return None

@@ -47,7 +47,7 @@
     {% for section in sections %}
     <div class="card" style="position: relative;">
         <form action="{{ url_for('remove_class', section_id=section.id) }}" method="post" onsubmit="return confirm('Remove this class?');" style="position: absolute; top: 12px; right: 12px; z-index: 5;">
-             <button type="submit" style="background: none; border: none; padding: 4px; cursor: pointer; color: #cbd5e1; transition: color 0.2s;" title="Remove Class" onmouseover="this.style.color='#ef4444'" onmouseout="this.style.color='#cbd5e1'">
+             <button type="submit" style="background: none; border: none; padding: 4px; cursor: pointer; color: var(--muted); transition: color 0.2s;" title="Remove Class" onmouseover="this.style.color='#ef4444'" onmouseout="this.style.color=''">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="8" y1="12" x2="16" y2="12"></line></svg>
             </button>
         </form>
@@ -62,7 +62,7 @@
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
             </div>
             <div>
-                <span style="font-size:13px; color:#64748b;">{{ section.start_date.strftime('%b %d') }} - {{ section.end_date.strftime('%b %d, %Y') }}</span>
+                <span style="font-size:14px; font-weight:500;">{{ section.start_date.strftime('%b %d') }} - {{ section.end_date.strftime('%b %d, %Y') }}</span>
             </div>
         </div>
 
@@ -73,7 +73,7 @@
             <div>
                 <strong>{{ section.days_of_week }}</strong>
                 {% if section.start_time and section.end_time %}
-                <span style="margin-left:4px;">{{ section.start_time.strftime('%I:%M %p') }} - {{ section.end_time.strftime('%I:%M %p') }}</span>
+                <span style="margin: 0 4px; color:var(--muted);">•</span><span>{{ section.start_time.strftime('%I:%M %p') }} - {{ section.end_time.strftime('%I:%M %p') }}</span>
                 {% else %}
                 <span style="font-style:italic;">iCourse</span>
                 {% endif %}
@@ -85,15 +85,21 @@
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
             </div>
             <div>
-                {{ section.location }}
+                {% if section.location.lower() == 'internet' %}
+                    {{ section.location }}
+                {% else %}
+                    <a href="https://www.google.com/maps/search/?api=1&query={{ section.location | urlencode }}" target="_blank" rel="noopener noreferrer" style="color:var(--primary); text-decoration:underline; transition: opacity 0.2s;" onmouseover="this.style.opacity='0.8'" onmouseout="this.style.opacity='1'">
+                        {{ section.location }}
+                    </a>
+                {% endif %}
             </div>
         </div>
 
-        <div class="info-row" style="margin-top:auto; padding-top:12px; border-top:1px solid #f8fafc;">
+        <div class="info-row" style="margin-top:auto; padding-top:12px; border-top:1px solid var(--border-color);">
             <div class="info-icon">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
             </div>
-            <div style="font-family:monospace; color:#64748b;">
+            <div style="font-family:monospace; color:var(--muted);">
                 Section #{{ section.asu_section_id }}
             </div>
         </div>

@@ -18,6 +18,10 @@
           <div class="title">Weekly Availability</div>
         </div>
         
+        <div class="current-status" id="current-status">
+          <span class="status-text" id="status-text">Checking status...</span>
+        </div>
+        
         <span class="date-range" id="date-range-display">Loading...</span>
       </div>
     </div>
@@ -25,6 +29,7 @@
     <div class="week">
       <div class="time-column" id="time-column"></div>
       <div class="days" id="days"></div>
+      <div id="current-time-marker" style="display: none;"></div>
     </div>
   </div>
 
@@ -36,9 +41,10 @@
 <script>
   // Initialize with data from Flask
   const ALL_PEOPLE = {{ people | tojson }};
-  const ALL_EVENTS = {{ events | tojson }};
+  window.ALL_EVENTS = {{ events | tojson }}; // Use window.ALL_EVENTS so it can be updated when week changes
   const FRIENDS_IDS = {{ friends_ids | tojson }};
-  const CURRENT_USER_ID = {{ current_user_id | tojson }};
+  window.CURRENT_USER_ID = {{ current_user_id | tojson }}; // Make globally accessible for color differentiation
+  const CURRENT_USER_ID = window.CURRENT_USER_ID; // Keep local reference for compatibility
   
   // Initial Load: Show only ME
   function getActiveFilters() {
@@ -65,31 +71,234 @@
      return visibleUserIds;
   }
 
+  function saveFilterState() {
+      const filterState = {
+          showMe: document.getElementById('filter-me')?.checked || false,
+          showFriends: document.getElementById('filter-friends-all')?.checked || false,
+          activeGroups: []
+      };
+      
+      // Collect checked group indices
+      document.querySelectorAll('.group-checkbox').forEach((cb, index) => {
+          if (cb.checked) {
+              filterState.activeGroups.push(index);
+          }
+      });
+      
+      localStorage.setItem('calendarFilters', JSON.stringify(filterState));
+  }
+  
+  function loadFilterState() {
+      const saved = localStorage.getItem('calendarFilters');
+      let filterState;
+      
+      if (!saved) {
+          // Set defaults: show Me only
+          filterState = {
+              showMe: true,
+              showFriends: false,
+              activeGroups: []
+          };
+      } else {
+          try {
+              filterState = JSON.parse(saved);
+          } catch (e) {
+              console.error('Failed to load filter state:', e);
+              // Use defaults on parse error
+              filterState = {
+                  showMe: true,
+                  showFriends: false,
+                  activeGroups: []
+              };
+          }
+      }
+      
+      // Apply filter state to checkboxes
+      const meCheckbox = document.getElementById('filter-me');
+      if (meCheckbox) meCheckbox.checked = filterState.showMe;
+      
+      const friendsCheckbox = document.getElementById('filter-friends-all');
+      if (friendsCheckbox) friendsCheckbox.checked = filterState.showFriends;
+      
+      // Restore group filters (uncheck all first, then check saved ones)
+      const groupCheckboxes = document.querySelectorAll('.group-checkbox');
+      groupCheckboxes.forEach((cb, index) => {
+          cb.checked = filterState.activeGroups.includes(index);
+      });
+  }
+
   function updateCalendar() {
       if (!window.CalendarPrototype) return;
       
       const visibleIds = getActiveFilters();
       
+      // Store visible IDs globally so drawDayGradient can access them
+      window.VISIBLE_USER_IDS = visibleIds;
+      
       // Filter People
       const filteredPeople = ALL_PEOPLE.filter(p => visibleIds.has(p.id));
       
-      // Filter Events
-      const filteredEvents = ALL_EVENTS.filter(e => visibleIds.has(e.person));
+      // Pass ALL events to redraw - filtering will happen in drawDayGradient
+      window.CalendarPrototype.redraw(window.ALL_EVENTS, filteredPeople);
       
-      window.CalendarPrototype.redraw(filteredEvents, filteredPeople);
+      // Save filter state to localStorage
+      saveFilterState();
+  }
+
+  // Update current time marker position
+  window.updateCurrentTimeMarker = function() {
+      const marker = document.getElementById('current-time-marker');
+      if (!marker) {
+          console.log('Marker element not found');
+          return;
+      }
+      
+      const now = new Date();
+      const currentDay = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
+      const currentHour = now.getHours();
+      const currentMinute = now.getMinutes();
+      const currentTimeInMinutes = currentHour * 60 + currentMinute;
+      
+      console.log('Current time:', currentHour + ':' + currentMinute, 'Day:', currentDay);
+      
+      // Calculate which day column (Mon=0, Tue=1, ..., Sun=6)
+      let dayIndex = currentDay - 1; // Convert Sunday=0 to Mon=0 system
+      if (dayIndex === -1) dayIndex = 6; // Sunday becomes index 6
+      
+      console.log('Day index:', dayIndex);
+      
+      // Check if current day is visible
+      const weekContainer = document.querySelector('.week');
+      const dayElement = document.querySelector(`.day[data-day="${dayIndex}"]`);
+      
+      console.log('Week container:', weekContainer);
+      console.log('Day element:', dayElement);
+      
+      if (!dayElement || !weekContainer) {
+          console.log('Day element or week container not found');
+          marker.style.display = 'none';
+          return;
+      }
+      
+      // Check if we're viewing the current week
+      // The week loads data from window.currentWeekStart if available
+      let isCurrentWeek = true;
+      if (window.currentWeekStart) {
+          const weekStart = new Date(window.currentWeekStart);
+          const weekEnd = new Date(weekStart);
+          weekEnd.setDate(weekStart.getDate() + 6);
+          
+          // Check if today falls within the week range
+          const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          isCurrentWeek = today >= new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate()) && 
+                         today <= new Date(weekEnd.getFullYear(), weekEnd.getMonth(), weekEnd.getDate());
+          console.log('Week start:', weekStart, 'Week end:', weekEnd, 'Today:', today, 'Is current week:', isCurrentWeek);
+      } else {
+          console.log('No currentWeekStart found, assuming current week');
+      }
+      
+      if (!isCurrentWeek) {
+          console.log('Not viewing current week');
+          marker.style.display = 'none';
+          return;
+      }
+      
+      // Calculate vertical position based on time
+      // Use dynamic CFG values that update when time selectors change
+      const workStartMin = (window.CFG?.workStartHour || 8) * 60;
+      const workEndMin = (window.CFG?.workEndHour || 20) * 60;
+      
+      if (currentTimeInMinutes < workStartMin || currentTimeInMinutes >= workEndMin) {
+          console.log('Outside work hours');
+          marker.style.display = 'none';
+          return;
+      }
+      
+      const totalWorkMinutes = workEndMin - workStartMin;
+      const minutesIntoWorkday = currentTimeInMinutes - workStartMin;
+      const fraction = minutesIntoWorkday / totalWorkMinutes;
+      
+      // Position calculation (matching calendar layout)
+      const HEADER_OFFSET = 38; // day-label height
+      const canvasHeight = window.CFG?.canvasHeightPx || 720;
+      const topPosition = HEADER_OFFSET + (fraction * canvasHeight);
+      
+      // Get day column position
+      const dayRect = dayElement.getBoundingClientRect();
+      const weekRect = weekContainer.getBoundingClientRect();
+      const leftOffset = dayRect.left - weekRect.left;
+      const dayWidth = dayRect.width;
+      
+      console.log('Positioning marker at:', {leftOffset, topPosition, dayWidth});
+      
+      // Format current time for display
+      const displayHours = currentHour % 12 || 12;
+      const ampm = currentHour >= 12 ? 'PM' : 'AM';
+      const timeString = `${displayHours}:${String(currentMinute).padStart(2, '0')} ${ampm}`;
+      
+      // Style the marker - always use blue color
+      const markerColor = '#60a5fa';
+      const isDarkMode = document.documentElement.getAttribute('data-theme') === 'dark';
+      const textShadow = isDarkMode ? '0 0 3px #0f172a, 0 0 3px #0f172a, 0 0 3px #0f172a' : '0 0 3px white, 0 0 3px white, 0 0 3px white';
+      
+      marker.style.display = 'block';
+      marker.style.position = 'absolute';
+      marker.style.left = leftOffset + 'px';
+      marker.style.width = dayWidth + 'px';
+      marker.style.top = topPosition + 'px';
+      marker.style.height = '2px';
+      marker.style.backgroundColor = markerColor;
+      marker.style.boxShadow = '0 1px 2px rgba(96, 165, 250, 0.5)';
+      marker.style.opacity = '0.8';
+      marker.style.zIndex = '100';
+      marker.style.pointerEvents = 'none';
+      
+      // Add a custom CSS arrow at the start and time label
+      marker.innerHTML = `
+        <div style="position: absolute; left: 0px; top: -5px; width: 0; height: 0; border-top: 6px solid transparent; border-bottom: 6px solid transparent; border-left: 8px solid ${markerColor};"></div>
+        <div style="position: absolute; left: 12px; top: -13px; color: ${markerColor}; font-size: 11px; font-weight: 700; white-space: nowrap; text-shadow: ${textShadow};">${timeString}</div>
+      `;
+      
+      console.log('Marker should now be visible');
   }
 
   // Attach listeners after DOM load
   document.addEventListener('DOMContentLoaded', () => {
+     
+     // Load saved filter state
+     loadFilterState();
+     
+     // Update marker position on window resize
+     window.addEventListener('resize', () => {
+         if (window.updateCurrentTimeMarker) {
+             window.updateCurrentTimeMarker();
+         }
+     });
      // Initial draw
      updateCalendar();
+     
+     // Update current time marker after a short delay to ensure layout is ready
+     setTimeout(() => {
+         window.updateCurrentTimeMarker();
+         
+         // Calculate milliseconds until next minute
+         const now = new Date();
+         const msUntilNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
+         
+         // Schedule first update at the start of next minute
+         setTimeout(() => {
+             window.updateCurrentTimeMarker();
+             // Then update every minute on the minute
+             setInterval(window.updateCurrentTimeMarker, 60000);
+         }, msUntilNextMinute);
+     }, 500);
   });
 </script>
 {% endblock %}
 
 {% block right_sidebar %}
 <aside class="right-sidebar">
-    <div class="sidebar-section">
+    <div class="sidebar-section" style="flex-shrink: 0;">
         <div class="sidebar-header-text">Navigation</div>
         <button id="btn-today" class="sidebar-btn text-only" title="Jump to Today">Today</button>
         <div class="control-group">
@@ -122,17 +331,17 @@
          </label>
     </div>
 
-    <div class="divider-h" style="width: 100%;"></div>
+    <div class="divider-h" style="width: 100%; flex-shrink: 0;"></div>
 
-    <div class="sidebar-section" style="flex: 1; min-height: 0; overflow: hidden;">
-        <div class="sidebar-header-text">Schedules</div>
+    <div class="sidebar-section" style="flex: 1 1 0; min-height: 0; overflow: hidden;">
+        <div class="sidebar-header-text" style="flex-shrink: 0;">Schedules</div>
         
         <!-- Icon Toggles For Me/Friends -->
-        <div style="display: flex; gap: 8px; justify-content: center; margin-bottom: 4px;">
+        <div style="display: flex; gap: 8px; justify-content: center; margin-bottom: 4px; flex-shrink: 0;">
             <!-- Me Toggle -->
             <label title="Me" style="cursor: pointer; position: relative;">
-                <input type="checkbox" id="filter-me" checked onchange="updateCalendar()" style="position: absolute; opacity: 0; width: 0; height: 0;" class="icon-checkbox">
-                <div class="icon-toggle" style="width: 32px; height: 32px; border-radius: 8px; background: #f1f5f9; color: #64748b; display: flex; align-items: center; justify-content: center; transition: all 0.2s; border: 2px solid transparent;">
+                <input type="checkbox" id="filter-me" onchange="updateCalendar()" style="position: absolute; opacity: 0; width: 0; height: 0;" class="icon-checkbox">
+                <div class="icon-toggle" style="width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; transition: all 0.2s; border: 2px solid transparent;">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
                 </div>
             </label>
@@ -140,58 +349,107 @@
             <!-- Friends Toggle -->
             <label title="All Friends" style="cursor: pointer; position: relative;">
                 <input type="checkbox" id="filter-friends-all" onchange="updateCalendar()" style="position: absolute; opacity: 0; width: 0; height: 0;" class="icon-checkbox">
-                <div class="icon-toggle" style="width: 32px; height: 32px; border-radius: 8px; background: #f1f5f9; color: #64748b; display: flex; align-items: center; justify-content: center; transition: all 0.2s; border: 2px solid transparent;">
+                <div class="icon-toggle" style="width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; transition: all 0.2s; border: 2px solid transparent;">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
                 </div>
             </label>
         </div>
 
         <style>
+            .icon-toggle {
+                background: var(--hover-bg);
+                color: var(--muted);
+            }
             .icon-checkbox:checked + .icon-toggle {
-                background: #dbeafe; /* Blue-100 */
-                color: #2563eb;    /* Blue-600 */
-                border-color: #bfdbfe;
+                background: var(--active-bg) !important;
+                color: var(--active-color) !important;
+                border-color: var(--active-color) !important;
             }
             .icon-checkbox:hover + .icon-toggle {
-                background: #e2e8f0;
+                background: var(--input-border) !important;
             }
             .icon-checkbox:checked:hover + .icon-toggle {
-                background: #bfdbfe;
+                background: var(--active-bg) !important;
+                opacity: 0.9;
             }
         </style>
 
         {% if groups %}
-        <div style="margin-top: 12px; width: 100%; display: flex; flex-direction: column; min-height: 0; flex: 1;">
-            <div style="font-size: 10px; text-transform: uppercase; color: #94a3b8; font-weight: 700; letter-spacing: 0.5px; margin-bottom: 8px; text-align: center; flex-shrink: 0;">Groups</div>
-            
-            <!-- Compact Circle Toggles -->
-            <div style="display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; overflow-y: auto; flex: 1; min-height: 0; align-content: flex-start;">
-                {% for g in groups %}
-                <label title="{{ g.name }}" style="cursor: pointer; position: relative;">
-                    <input type="checkbox" class="group-checkbox" data-members="{{ g.members | tojson }}" onchange="updateCalendar()" style="position: absolute; opacity: 0; width: 0; height: 0;">
-                    
-                    <!-- Visual Circle -->
-                    <div class="group-circle-toggle" style="width: 34px; height: 34px; border-radius: 50%; background: #f1f5f9; color: #64748b; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; border: 2px solid transparent; transition: all 0.2s;">
-                        {{ g.name[:2] | upper }}
-                    </div>
-                </label>
-                {% endfor %}
-            </div>
-
-            <style>
-                .group-checkbox:checked + .group-circle-toggle {
-                    background: #dbeafe; /* Blue-100 */
-                    color: #2563eb;    /* Blue-600 */
-                    border-color: #bfdbfe;
-                }
-                .group-checkbox:hover + .group-circle-toggle {
-                    background: #e2e8f0;
-                }
-                .group-checkbox:checked:hover + .group-circle-toggle {
-                    background: #bfdbfe;
-                }
-            </style>
+        <div class="groups-header" style="font-size: 10px; text-transform: uppercase; color: var(--muted); font-weight: 700; letter-spacing: 0.5px; margin-top: 12px; text-align: center; flex-shrink: 0;">Groups</div>
+        
+        <div class="groups-scroll-container">
+            {% for g in groups %}
+            <label title="{{ g.name }}" class="group-label">
+                <input type="checkbox" class="group-checkbox" data-members="{{ g.members | tojson }}" onchange="updateCalendar()">
+                <div class="group-circle-toggle">
+                    <img src="{{ url_for('static', filename='profile_pics/' + g.profile_image) }}" 
+                        alt="{{ g.name }}"
+                        style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;"
+                        onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                    <span style="display: none; width: 100%; height: 100%; align-items: center; justify-content: center; font-weight: 700; font-size: 14px;">{{ g.name[:2] | upper }}</span>
+                </div>
+            </label>
+            {% endfor %}
         </div>
+
+        <style>
+            .groups-scroll-container {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+                justify-content: center;
+                align-content: flex-start;
+                overflow-y: auto;
+                overflow-x: hidden;
+                flex: 1;
+                min-height: 0;
+                width: 100%;
+                padding: 4px 0;
+            }
+            
+            .group-label {
+                cursor: pointer;
+                position: relative;
+                flex-shrink: 0;
+            }
+            
+            .group-checkbox {
+                position: absolute;
+                opacity: 0;
+                width: 0;
+                height: 0;
+            }
+            
+            .group-circle-toggle {
+                width: 34px;
+                height: 34px;
+                border-radius: 50%;
+                background: var(--hover-bg);
+                color: var(--muted);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 12px;
+                font-weight: 600;
+                border: 2px solid transparent;
+                transition: all 0.2s;
+            }
+            
+            .group-checkbox:checked + .group-circle-toggle {
+                background: var(--active-bg);
+                color: var(--active-color);
+                border-color: var(--active-color);
+            }
+            
+            .group-checkbox:hover + .group-circle-toggle {
+                background: var(--input-border);
+            }
+            
+            .group-checkbox:checked:hover + .group-circle-toggle {
+                background: var(--active-bg);
+                opacity: 0.9;
+            }
+        </style>
         {% endif %}
     </div>
 </aside>

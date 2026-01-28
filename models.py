@@ -14,7 +14,6 @@ class User(db.Model, UserMixin):
     
     username = db.Column(db.String(30), unique=True, nullable=False)
     profile_image = db.Column(db.String(255), nullable=False, default='default.jpg')
-    is_active = db.Column(db.Boolean, default=True)
 
     password_hash = db.Column(db.String(255), nullable=False)
 
@@ -67,6 +66,7 @@ class Group(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
     description = db.Column(db.String(255), nullable=True)
+    profile_image = db.Column(db.String(255), nullable=False, default='default_group.jpg')
     created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     
@@ -81,7 +81,9 @@ class GroupMember(db.Model):
     group_id = db.Column(db.Integer, db.ForeignKey("groups.id"), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     role = db.Column(db.String(20), default="member") # admin, member
+    status = db.Column(db.String(20), default="pending") # pending, accepted
     joined_at = db.Column(db.DateTime, default=datetime.utcnow)
+    display_order = db.Column(db.Integer, default=0)  # Custom order for each user
 
     group = db.relationship("Group", back_populates="members")
     user = db.relationship("User", backref="groups")

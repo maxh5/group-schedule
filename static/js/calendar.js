@@ -11,6 +11,9 @@ const CFG = {
   events: []
 };
 
+// Expose CFG globally for access from calendar.html
+window.CFG = CFG;
+
 /* =========================
    Helpers
    ========================= */
@@ -91,6 +94,7 @@ let eventsByDay = {};
 
 /* Canvas draw: for each day draw a smooth vertical gradient
    where intensity = number of concurrent events (people busy)
+   If "Me" filter is active, use blue for user and green for others
 */
 function drawDayGradient(dayIndex){
   const canvas = document.getElementById(`canvas-${dayIndex}`);
@@ -105,41 +109,71 @@ function drawDayGradient(dayIndex){
   const endMin = CFG.workEndHour * 60;
   const totalMins = endMin - startMin;
 
-  // For each vertical pixel row, compute how many people are busy at that minute
-  // We'll sample by minute => map y to minute
-  // Precompute a count per minute for the day
-  const counts = new Uint8Array(totalMins); // up to 255 people — enough
+  // Check if "Me" filter is active
+  const showMe = document.getElementById('filter-me')?.checked || false;
+
+  // Get visible user IDs from global state
+  const visibleIds = window.VISIBLE_USER_IDS || new Set();
+
+  // Track counts separately for user vs others when "Me" is active
+  const userCounts = new Uint8Array(totalMins);
+  const otherCounts = new Uint8Array(totalMins);
   const perMinutePeople = Array.from({length: totalMins}, () => []); // who is busy that minute
 
   const dayEvents = eventsByDay[dayIndex] || [];
   for(const e of dayEvents){
+    // Only process events for visible users
+    if (!visibleIds.has(e.person)) continue;
+    
     // Clip to workday
     const s = Math.max(e.startMin, startMin);
     const t = Math.min(e.endMin, endMin);
+    const isUser = showMe && window.CURRENT_USER_ID && e.person === window.CURRENT_USER_ID;
+    
     for(let m = s; m < t; m++){
       const idx = m - startMin;
-      counts[idx] = counts[idx] + 1;
+      if (isUser) {
+        userCounts[idx] = userCounts[idx] + 1;
+      } else {
+        otherCounts[idx] = otherCounts[idx] + 1;
+      }
       perMinutePeople[idx].push({ personId: e.person, event: e });
     }
   }
 
-  // Determine max concurrent count for color scale
-  const maxCount = Math.max(1, ...counts);
+  // Determine max concurrent count for the entire day (combining user and others)
+  // This ensures all events scale relative to the day's busiest moment
+  const combinedCounts = new Uint8Array(totalMins);
+  for(let i = 0; i < totalMins; i++) {
+    combinedCounts[i] = userCounts[i] + otherCounts[i];
+  }
+  const maxCount = Math.max(1, ...combinedCounts);
 
-  // Color mapping: we'll map count 0..maxCount to a color ramp (light green -> deep green)
-  // Function returns [r,g,b,a]
-  function colorForCount(c){
-    if (c === 0) return [240,255,240,40]; // light green
-    // Interpolate between light and deep
-    // t from 0..1
-    const t = Math.min(1, c / maxCount);
-    // base RGB anchors
-    const r = Math.round(240 + (0 - 240) * t);
-    const g = Math.round(255 + (100 - 255) * t);
-    const b = Math.round(240 + (0 - 240) * t);
-    // Add alpha ramp so low counts are faint
-    const a = Math.round(40 + (220 - 40) * t);
-    return [r,g,b,a];
+  // Color mapping: blue for user, green for others
+  function getColorForMinute(userC, otherC){
+    if (userC === 0 && otherC === 0) return [240,255,240,40]; // very light green background
+    
+    // Calculate combined count and intensity relative to the day's maximum
+    const combinedC = userC + otherC;
+    const combinedIntensity = Math.min(1, combinedC / maxCount);
+    const t = combinedIntensity;
+    
+    if (showMe && userC > 0) {
+      // User is busy - always show blue (even if others are also busy)
+      const r = Math.round(240 + (30 - 240) * t);  // Light blue to deep blue
+      const g = Math.round(248 + (144 - 248) * t);
+      const b = Math.round(255 + (255 - 255) * t);
+      const a = Math.round(40 + (220 - 40) * t);
+      return [r,g,b,a];
+    } else {
+      // Only others busy (or Me not active) - green gradient
+      const t = combinedIntensity;
+      const r = Math.round(240 + (0 - 240) * t);
+      const g = Math.round(255 + (100 - 255) * t);
+      const b = Math.round(240 + (0 - 240) * t);
+      const a = Math.round(40 + (220 - 40) * t);
+      return [r,g,b,a];
+    }
   }
 
   // Paint pixels: map y(0..h) to minute index (0..totalMins-1)
@@ -148,8 +182,9 @@ function drawDayGradient(dayIndex){
     const frac = y / (h-1);
     // minute index = round(frac * (totalMins-1))
     const minuteIdx = Math.min(totalMins-1, Math.round(frac * (totalMins-1)));
-    const c = counts[minuteIdx] || 0;
-    const [r,g,b,a] = colorForCount(c);
+    const userC = userCounts[minuteIdx] || 0;
+    const otherC = otherCounts[minuteIdx] || 0;
+    const [r,g,b,a] = getColorForMinute(userC, otherC);
     for(let x=0; x<w; x++){
       const pxIndex = (y * w + x) * 4;
       image.data[pxIndex] = r;
@@ -247,20 +282,34 @@ for(let d=0; d<CFG.days.length; d++){
           timeUntilFree = `Free in ${remainingMins}m`;
       }
       
-      const avatarStyle = p.profile_image ? `background-image: url('/static/profile_pics/${p.profile_image}'); background-size: cover;` : `background-color: #cbd5e1; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 10px; font-weight: 700;`;
-      const avatarContent = p.profile_image ? '' : (p.name ? p.name.substring(0,2).toUpperCase() : '??');
+      // Build avatar URL exactly like friends.html does
+      const profilePicPath = p.profile_image ? `${encodeURIComponent(p.profile_image)}` : '';
+      const profilePicUrl = profilePicPath ? `/static/profile_pics/${profilePicPath}` : '';
+      
+      // Fallback avatar URL (same as friends.html onerror)
+      const fallbackAvatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(p.name)}&background=random`;
+      
+      // Use the profile pic if available, otherwise use UI Avatars fallback
+      // Check for invalid default placeholders
+      const hasValidImage = p.profile_image && 
+                           p.profile_image !== 'default.jpg' && 
+                           p.profile_image !== 'default_group.jpg';
+      
+      const avatarUrl = hasValidImage ? profilePicUrl : fallbackAvatarUrl;
+      const avatarStyle = `background-image: url('${avatarUrl}'); background-size: cover; background-position: center;`;
+      const avatarContent = '';
 
       return `
       <div class="tooltip-row" style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
           <div class="tooltip-avatar" style="width: 36px; height: 36px; flex-shrink: 0; border-radius: 50%; ${avatarStyle}">${avatarContent}</div>
           <div class="tooltip-info" style="flex: 1; min-width: 0;">
-              <div class="tooltip-name" style="font-weight: 600; font-size: 14px; color: #1e293b; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${p.name}</div>
-              <div class="tooltip-status" style="font-size: 12px; color: #64748b; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${ev.title || 'Busy'} • ${timeUntilFree}</div>
+              <div class="tooltip-name" style="font-weight: 700; font-size: 15px; color: var(--tooltip-text); line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${p.name}</div>
+              <div class="tooltip-status" style="font-size: 12px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${ev.title || 'Busy'} • ${timeUntilFree}</div>
            </div>
       </div>`;
-    }).join('') : `<div class="muted" style="color: #94a3b8; font-size: 13px; font-style: italic;">No one in class</div>`;
+    }).join('') : `<div class="muted" style="color: var(--muted); font-size: 13px; font-style: italic;">No one in class</div>`;
     
-    const content = `<div style="margin-bottom: 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #94a3b8; font-weight: 700;">${CFG.days[d]} • ${hhmm}</div>${attendeesHtml}`;
+    const content = `<div style="margin-bottom: 8px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--tooltip-text); font-weight: 700; opacity: 0.8;">${CFG.days[d]} • ${hhmm}</div>${attendeesHtml}`;
     
     // position tooltip near cursor but keep inside window
     const left = Math.min(window.innerWidth - 300, ev.clientX + 16);
@@ -342,6 +391,8 @@ function redraw(newEvents, people){
     for(let d=0; d<CFG.days.length; d++){
       perDayMinuteMaps[d] = drawDayGradient(d);
     }
+    // Update current status display
+    updateCurrentStatus();
   }
 }
 
@@ -351,6 +402,8 @@ function init() {
   for(let d=0; d<CFG.days.length; d++){
     perDayMinuteMaps[d] = drawDayGradient(d);
   }
+  // Initialize status display
+  updateCurrentStatus();
 }
 
 /* End prototype */
@@ -375,6 +428,9 @@ function init() {
   }
 
   function updateView() {
+    // Store globally so time marker can check if we're viewing current week
+    window.currentWeekStart = new Date(currentMonday);
+    
     const showWeekends = document.getElementById('weekend-toggle')?.checked || false;
     const numDays = showWeekends ? 7 : 5;
 
@@ -435,6 +491,32 @@ function init() {
     }
   }
 
+  // Function to fetch events for the current week from the API
+  async function fetchWeekEvents() {
+    const dateStr = currentMonday.toISOString().split('T')[0]; // Format: YYYY-MM-DD
+    try {
+      const response = await fetch(`/api/events?week_start=${dateStr}`);
+      if (!response.ok) {
+        console.error('Failed to fetch events:', response.statusText);
+        return;
+      }
+      const data = await response.json();
+      
+      // Update the events with the filtered data from updateCalendar()
+      if (window.CalendarPrototype && data.events) {
+        // Store the new events globally
+        window.ALL_EVENTS = data.events;
+        
+        // Trigger the calendar update with current filters
+        if (typeof updateCalendar === 'function') {
+          updateCalendar();
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching week events:', error);
+    }
+  }
+
   // Event Listeners
   const btnPrev = document.getElementById('btn-prev');
   const btnNext = document.getElementById('btn-next');
@@ -442,23 +524,32 @@ function init() {
   const weekendToggle = document.getElementById('weekend-toggle');
 
   if (weekendToggle) {
-    weekendToggle.addEventListener('change', updateView);
+    weekendToggle.addEventListener('change', () => {
+      updateView();
+      if (window.updateCurrentTimeMarker) window.updateCurrentTimeMarker();
+    });
   }
 
   if (btnPrev && btnNext && btnToday) {
-      btnPrev.addEventListener('click', () => {
+      btnPrev.addEventListener('click', async () => {
           currentMonday.setDate(currentMonday.getDate() - 7);
           updateView();
+          await fetchWeekEvents();
+          if (window.updateCurrentTimeMarker) window.updateCurrentTimeMarker();
       });
 
-      btnNext.addEventListener('click', () => {
+      btnNext.addEventListener('click', async () => {
           currentMonday.setDate(currentMonday.getDate() + 7);
           updateView();
+          await fetchWeekEvents();
+          if (window.updateCurrentTimeMarker) window.updateCurrentTimeMarker();
       });
       
-      btnToday.addEventListener('click', () => {
+      btnToday.addEventListener('click', async () => {
           currentMonday = getMonday(new Date());
           updateView();
+          await fetchWeekEvents();
+          if (window.updateCurrentTimeMarker) window.updateCurrentTimeMarker();
       });
   }
 
@@ -519,6 +610,9 @@ function init() {
     for(let d=0; d<CFG.days.length; d++){
         perDayMinuteMaps[d] = drawDayGradient(d);
     }
+    
+    // Update current time marker
+    if (window.updateCurrentTimeMarker) window.updateCurrentTimeMarker();
   }
 
   populateSelects();
@@ -558,6 +652,9 @@ function init() {
         for(let d=0; d<CFG.days.length; d++){
            perDayMinuteMaps[d] = drawDayGradient(d);
         }
+        
+        // 3. Update current time marker position
+        if (window.updateCurrentTimeMarker) window.updateCurrentTimeMarker();
     }
   }
 
@@ -583,5 +680,95 @@ function init() {
     toggle.addEventListener('change', () => setTimeout(fitToContainer, 350)); // wait for transition
   }
 })();
+/* Update Current Status Display */
+function updateCurrentStatus() {
+  const statusText = document.getElementById('status-text');
+  
+  if (!statusText || !window.CURRENT_USER_ID) return;
+  
+  const now = new Date();
+  const currentDay = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
+  const currentMinute = now.getHours() * 60 + now.getMinutes();
+  
+  // Convert Sunday (0) to index 6, Monday (1) to 0, etc.
+  const dayIndex = currentDay === 0 ? 6 : currentDay - 1;
+  
+  // Get user's events for today
+  const todayEvents = (eventsByDay[dayIndex] || []).filter(e => 
+    e.person === window.CURRENT_USER_ID
+  );
+  
+  if (todayEvents.length === 0) {
+    statusText.textContent = 'Free for the day!';
+    statusText.className = 'status-text free';
+    return;
+  }
+  
+  // Find current or next event
+  let currentEvent = null;
+  let nextEvent = null;
+  
+  for (const event of todayEvents) {
+    if (currentMinute >= event.startMin && currentMinute < event.endMin) {
+      currentEvent = event;
+      break;
+    } else if (currentMinute < event.startMin) {
+      if (!nextEvent || event.startMin < nextEvent.startMin) {
+        nextEvent = event;
+      }
+    }
+  }
+  
+  if (currentEvent) {
+    // Currently busy
+    const minutesLeft = currentEvent.endMin - currentMinute;
+    const hours = Math.floor(minutesLeft / 60);
+    const mins = minutesLeft % 60;
+    
+    let timeStr = '';
+    if (hours > 0) {
+      timeStr = `${hours}h ${mins}m left`;
+    } else {
+      timeStr = `${mins}m left`;
+    }
+    
+    statusText.textContent = `${currentEvent.title || 'Busy'} • ${timeStr}`;
+    statusText.className = 'status-text busy';
+  } else if (nextEvent) {
+    // Free until next event
+    const minutesUntil = nextEvent.startMin - currentMinute;
+    const hours = Math.floor(minutesUntil / 60);
+    const mins = minutesUntil % 60;
+    
+    let timeStr = '';
+    if (hours > 0) {
+      timeStr = `${hours}h ${mins}m`;
+    } else {
+      timeStr = `${mins}m`;
+    }
+    
+    statusText.textContent = `${nextEvent.title || 'Event'} in ${timeStr}`;
+    statusText.className = 'status-text free';
+  } else {
+    // Free for rest of day
+    statusText.textContent = 'Done for the day!';
+    statusText.className = 'status-text free';
+  }
+}
+
+// Update status synchronized to the start of each minute
+(function() {
+  // Calculate milliseconds until next minute
+  const now = new Date();
+  const msUntilNextMinute = (60 - now.getSeconds()) * 1000 - now.getMilliseconds();
+  
+  // Schedule first update at the start of next minute
+  setTimeout(() => {
+    updateCurrentStatus();
+    // Then update every minute on the minute
+    setInterval(updateCurrentStatus, 60000);
+  }, msUntilNextMinute);
+})();
+
 /* Export API */
 window.CalendarPrototype = { redraw, init };

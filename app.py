@@ -1,23 +1,36 @@
-from flask import Flask, render_template, request, redirect, flash, url_for
+from flask import Flask, render_template, request, redirect, flash, url_for, jsonify
 from flask_login import logout_user, login_required, login_user, current_user
 import os
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import or_
+from datetime import datetime, timedelta
 
 
 # ----- Load environment -----
 load_dotenv()
 
 
+# ----- Constants -----
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+MAX_FILE_SIZE = 16 * 1024 * 1024  # 16 MB
+UPLOAD_FOLDER = 'static/profile_pics'
+
+# User color palette for calendar display
+USER_COLORS = [
+    "#FF8A80", "#FFD180", "#FFFF8D", "#B9F6CA", 
+    "#80D8FF", "#B388FF", "#CFD8DC", "#FF80AB", "#EA80FC"
+]
+
+
 # ----- App config -----
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret')
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///dev.db') # Default to SQLite for local dev
+app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///dev.db')
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['UPLOAD_FOLDER'] = 'static/profile_pics'
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024 # 16 MB max upload
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
 
 
 # ----- Imports -----
@@ -31,7 +44,57 @@ from extras.api import fetch_class_by_section, parse_class_item
 import models
 
 
-# ----- Functions -----
+# ----- Helper Functions -----
+def get_user_color(user_id):
+    """Generate consistent color for a user based on their ID."""
+    return USER_COLORS[user_id % len(USER_COLORS)]
+
+
+def get_related_user_ids(user_id):
+    """Get all user IDs related to the given user (friends + group members).
+    
+    Returns:
+        tuple: (set of user_ids, list of friend_user_ids, list of groups_data)
+    """
+    # Get friends
+    friends_query = models.Friendship.query.filter(
+        (models.Friendship.status == 'accepted') &
+        or_(
+            models.Friendship.requester_id == user_id,
+            models.Friendship.receiver_id == user_id
+        )
+    ).all()
+    
+    friend_users = []
+    for f in friends_query:
+        if f.requester_id == user_id:
+            friend_users.append(f.receiver)
+        else:
+            friend_users.append(f.requester)
+    
+    friends_ids = [u.id for u in friend_users]
+    
+    # Get groups and their members (only accepted memberships), ordered by display_order
+    my_memberships = models.GroupMember.query.filter_by(user_id=user_id, status='accepted').order_by(models.GroupMember.display_order).all()
+    groups_data = []
+    all_related_user_ids = set(friends_ids)
+    all_related_user_ids.add(user_id)
+    
+    for m in my_memberships:
+        group = m.group
+        # Only include accepted members in the group
+        member_ids = [gm.user_id for gm in group.members if gm.status == 'accepted']
+        groups_data.append({
+            "id": group.id,
+            "name": group.name,
+            "members": member_ids,
+            "profile_image": group.profile_image
+        })
+        all_related_user_ids.update(member_ids)
+    
+    return all_related_user_ids, friends_ids, groups_data
+
+
 @login_manager.user_loader
 def load_user(user_id):
     return models.User.query.get(int(user_id))
@@ -43,92 +106,43 @@ def index():
     if not current_user.is_authenticated:
         return redirect("/login")
 
-    # 1. Fetch Friends (ids)
-    friends_query = models.Friendship.query.filter(
-        (models.Friendship.status == 'accepted') &
-        or_(
-            models.Friendship.requester_id == current_user.id,
-            models.Friendship.receiver_id == current_user.id
-        )
-    ).all()
-    
-    friend_users = []
-    for f in friends_query:
-        if f.requester_id == current_user.id:
-            friend_users.append(f.receiver)
-        else:
-            friend_users.append(f.requester)
-    
-    friends_ids = [u.id for u in friend_users]
+    # Get related users (friends + group members)
+    all_related_user_ids, friends_ids, groups_data = get_related_user_ids(current_user.id)
 
-    # 2. Fetch Groups
-    my_memberships = models.GroupMember.query.filter_by(user_id=current_user.id).all()
-    groups_data = [] # [{id, name, member_ids}]
-    all_related_user_ids = set(friends_ids)
-    all_related_user_ids.add(current_user.id) # Include self
-
-    for m in my_memberships:
-        group = m.group
-        member_ids = [gm.user_id for gm in group.members]
-        groups_data.append({
-            "id": group.id,
-            "name": group.name,
-            "members": member_ids
-        })
-        # Add group members to the pool of users we need to fetch info for
-        for uid in member_ids:
-            all_related_user_ids.add(uid)
-
-    # 3. Fetch User Info for everyone involved
-    # We need a map of id -> {name, color}
-    # Simple consistent color hash based on id
-    def get_color(uid):
-        colors = ["#FF8A80", "#FFD180", "#FFFF8D", "#B9F6CA", "#80D8FF", "#B388FF", "#CFD8DC", "#FF80AB", "#EA80FC"]
-        return colors[uid % len(colors)]
-
+    # Fetch user info for everyone involved
     related_users = models.User.query.filter(models.User.id.in_(all_related_user_ids)).all()
-    people_map = []
-    for u in related_users:
-        people_map.append({
+    people_map = [
+        {
             "id": u.id,
-            "name": u.first_name, # or full_name
-            "color": get_color(u.id),
-            "profile_image": u.profile_image # for UI
-        })
+            "name": f"{u.first_name} {u.last_name}",
+            "color": get_user_color(u.id),
+            "profile_image": u.profile_image
+        }
+        for u in related_users
+    ]
 
-    # 4. Fetch Events for current week
-    #   Calculate Start/End of relative week
-    #   For "Weekly Availability", we might want to look at a typical week, 
-    #   but our DB stores specific dates. Let's just grab "Next 7 Days" or "Current Mon-Sun".
-    #   Let's do "Current Mon-Sun" of the *server time*.
-    from datetime import datetime, timedelta
+    # Calculate current week (Mon-Sun)
     today = datetime.now().date()
-    start_of_week = today - timedelta(days=today.weekday()) # Monday
-    end_of_week = start_of_week + timedelta(days=7) # Next Monday
+    start_of_week = today - timedelta(days=today.weekday())
+    end_of_week = start_of_week + timedelta(days=7)
 
-    # Query events
+    # Query events for the week
     relevant_events = models.Event.query.filter(
         models.Event.user_id.in_(all_related_user_ids),
         models.Event.start >= start_of_week,
         models.Event.start < end_of_week
     ).all()
 
-    events_data = []
-    for ev in relevant_events:
-        # Convert to 0-6 day index and HH:MM
-        # We assume database stores timezone-naive or UTC, aligning with server.
-        # For a prototype, naive is fine.
-        day_index = ev.start.weekday() # 0 = Mon
-        start_str = ev.start.strftime("%H:%M")
-        end_str = ev.end.strftime("%H:%M")
-        
-        events_data.append({
-            "day": day_index,
-            "start": start_str,
-            "end": end_str,
+    events_data = [
+        {
+            "day": ev.start.weekday(),
+            "start": ev.start.strftime("%H:%M"),
+            "end": ev.end.strftime("%H:%M"),
             "person": ev.user_id,
             "title": ev.title
-        })
+        }
+        for ev in relevant_events
+    ]
 
     return render_template(
         'calendar.html',
@@ -136,7 +150,8 @@ def index():
         events=events_data,
         friends_ids=friends_ids,
         groups=groups_data,
-        current_user_id=current_user.id
+        current_user_id=current_user.id,
+        active_page='calendar'
     )
 
 @app.route('/api', methods=['GET'])
@@ -145,7 +160,45 @@ def api():
     result = None
     if section:
         result = fetch_class_by_section(section)
-    return render_template('api.html', result=result, query=section)
+    return render_template('api.html', result=result, query=section, active_page='api')
+
+@app.route('/api/events', methods=['GET'])
+@login_required
+def get_events():
+    """API endpoint to fetch events for a specific week"""
+    week_start_str = request.args.get('week_start')
+    if not week_start_str:
+        return jsonify({"error": "week_start parameter required"}), 400
+    
+    try:
+        week_start = datetime.strptime(week_start_str, '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify({"error": "Invalid date format. Use YYYY-MM-DD"}), 400
+    
+    week_end = week_start + timedelta(days=7)
+    
+    # Get all related user IDs using helper function
+    all_related_user_ids, _, _ = get_related_user_ids(current_user.id)
+    
+    # Query events for the specified week
+    relevant_events = models.Event.query.filter(
+        models.Event.user_id.in_(all_related_user_ids),
+        models.Event.start >= week_start,
+        models.Event.start < week_end
+    ).all()
+    
+    events_data = [
+        {
+            "day": ev.start.weekday(),
+            "start": ev.start.strftime("%H:%M"),
+            "end": ev.end.strftime("%H:%M"),
+            "person": ev.user_id,
+            "title": ev.title
+        }
+        for ev in relevant_events
+    ]
+    
+    return jsonify({"events": events_data})
 
 @app.route('/classes', methods=['GET', 'POST'])
 @login_required
@@ -202,13 +255,15 @@ def classes():
 
         try:
             db.session.add(user_section)
-            # Add events from UserCourse
             user_section.create_events(db.session)
             db.session.commit()
             flash("Section added successfully.", "success")
         except IntegrityError:
             db.session.rollback()
             flash("You have already added this section.", "info")
+        except Exception as e:
+            db.session.rollback()
+            flash("An error occurred while adding the section.", "danger")
 
         return redirect("/classes")
     # GET
@@ -221,23 +276,27 @@ def classes():
     sections = [uc.section for uc in user_sections]
     return render_template(
         "classes.html",
-        sections=sections
+        sections=sections,
+        active_page='classes'
     )
 
 
 @app.route('/classes/remove/<int:section_id>', methods=['POST'])
 @login_required
 def remove_class(section_id):
-    # Retrieve the UserCourse entry linking the current user and the section
-    # Note: section_id here refers to the CourseSection.id (database primary key), not ASU ID
     user_course = models.UserCourse.query.filter_by(
         user_id=current_user.id,
         section_id=section_id
     ).first_or_404()
     
-    db.session.delete(user_course)
-    db.session.commit()
-    flash("Class removed.", "info")
+    try:
+        db.session.delete(user_course)
+        db.session.commit()
+        flash("Class removed.", "info")
+    except Exception as e:
+        db.session.rollback()
+        flash("An error occurred while removing the class.", "danger")
+    
     return redirect(url_for("classes"))
 
 
@@ -280,9 +339,14 @@ def friends():
 
         # Create request
         req = models.Friendship(requester_id=current_user.id, receiver_id=target_user.id)
-        db.session.add(req)
-        db.session.commit()
-        flash(f"Friend request sent to @{target_user.username}!", "success")
+        try:
+            db.session.add(req)
+            db.session.commit()
+            flash(f"Friend request sent to @{target_user.username}!", "success")
+        except Exception as e:
+            db.session.rollback()
+            flash("An error occurred while sending the friend request.", "danger")
+        
         return redirect(url_for("friends"))
 
     # GET: List friends and requests
@@ -303,12 +367,16 @@ def friends():
     
     friends_list = []
     for link in accepted_links:
-        if link.requester_id == current_user.id:
-            friends_list.append(link.receiver)
-        else:
-            friends_list.append(link.requester)
+        friend_user = link.receiver if link.requester_id == current_user.id else link.requester
+        # Calculate days as friends
+        days_as_friends = (datetime.utcnow() - link.created_at).days
+        friends_list.append({
+            'user': friend_user,
+            'friendship': link,
+            'days': days_as_friends
+        })
 
-    return render_template("friends.html", requests=incoming_requests, friends=friends_list)
+    return render_template("friends.html", requests=incoming_requests, friends=friends_list, active_page='friends')
 
 
 @app.route('/friends/remove/<int:friend_id>', methods=['POST'])
@@ -322,14 +390,14 @@ def remove_friend(friend_id):
         )
     ).first_or_404()
     
-    # Verify status is accepted (or pending)
-    if friendship.status != 'accepted':
-         # If not accepted, it might be a pending request. Deleting it cancels the request.
-         pass
-
-    db.session.delete(friendship)
-    db.session.commit()
-    flash("Friend removed.", "info")
+    try:
+        db.session.delete(friendship)
+        db.session.commit()
+        flash("Friend removed.", "info")
+    except Exception as e:
+        db.session.rollback()
+        flash("An error occurred while removing the friend.", "danger")
+    
     return redirect(url_for("friends"))
 
 
@@ -342,14 +410,18 @@ def friend_respond(request_id, action):
         flash("Unauthorized action.", "danger")
         return redirect(url_for("friends"))
 
-    if action == 'accept':
-        req.status = 'accepted'
-        db.session.commit()
-        flash(f"You are now friends with @{req.requester.username}!", "success")
-    elif action == 'decline':
-        db.session.delete(req)
-        db.session.commit()
-        flash("Friend request declined.", "info")
+    try:
+        if action == 'accept':
+            req.status = 'accepted'
+            db.session.commit()
+            flash(f"You are now friends with @{req.requester.username}!", "success")
+        elif action == 'decline':
+            db.session.delete(req)
+            db.session.commit()
+            flash("Friend request declined.", "info")
+    except Exception as e:
+        db.session.rollback()
+        flash("An error occurred while processing the request.", "danger")
     
     return redirect(url_for("friends"))
 
@@ -366,23 +438,58 @@ def groups():
             flash("Group name is required.", "danger")
             return redirect(url_for("groups"))
         
-        new_group = models.Group(name=name, description=description, created_by=current_user.id)
-        db.session.add(new_group)
-        db.session.commit() # Commit to get ID
+        try:
+            new_group = models.Group(name=name, description=description, created_by=current_user.id)
+            db.session.add(new_group)
+            db.session.flush()  # Get ID without committing
+            
+            # Add creator as admin with accepted status
+            membership = models.GroupMember(group_id=new_group.id, user_id=current_user.id, role='admin', status='accepted')
+            db.session.add(membership)
+            db.session.commit()
+            flash("Group created!", "success")
+        except Exception as e:
+            db.session.rollback()
+            flash("An error occurred while creating the group.", "danger")
         
-        # Add creator as admin
-        membership = models.GroupMember(group_id=new_group.id, user_id=current_user.id, role='admin')
-        db.session.add(membership)
-        db.session.commit()
-        
-        flash("Group created!", "success")
         return redirect(url_for("groups"))
 
-    # GET: List my groups
-    memberships = models.GroupMember.query.filter_by(user_id=current_user.id).all()
+    # GET: List my groups (accepted only) and pending invites
+    memberships = models.GroupMember.query.filter_by(user_id=current_user.id, status='accepted').order_by(models.GroupMember.display_order).all()
     my_groups = [m.group for m in memberships]
     
-    return render_template("groups.html", groups=my_groups)
+    # Get pending invites
+    pending_invites = models.GroupMember.query.filter_by(user_id=current_user.id, status='pending').all()
+    
+    return render_template("groups.html", groups=my_groups, pending_invites=pending_invites, active_page='groups')
+
+
+@app.route('/groups/reorder', methods=['POST'])
+@login_required
+def reorder_groups():
+    """API endpoint to save new group order"""
+    try:
+        data = request.get_json()
+        group_ids = data.get('group_ids', [])
+        
+        if not group_ids:
+            return jsonify({'success': False, 'error': 'No group IDs provided'}), 400
+        
+        # Update display_order for each group membership
+        for index, group_id in enumerate(group_ids):
+            membership = models.GroupMember.query.filter_by(
+                user_id=current_user.id, 
+                group_id=group_id
+            ).first()
+            
+            if membership:
+                membership.display_order = index
+        
+        db.session.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/groups/leave/<int:group_id>', methods=['POST'])
@@ -390,17 +497,19 @@ def groups():
 def leave_group(group_id):
     membership = models.GroupMember.query.filter_by(
         group_id=group_id, 
-        user_id=current_user.id
+        user_id=current_user.id,
+        status='accepted'
     ).first_or_404()
     
     group = membership.group
     
-    # Check if admin constraint
+    # Check if admin constraint - only consider other accepted members
     if membership.role == 'admin':
-        # Check if there are other members
+        # Check if there are other accepted members
         other_members_count = models.GroupMember.query.filter(
             models.GroupMember.group_id == group_id,
-            models.GroupMember.user_id != current_user.id
+            models.GroupMember.user_id != current_user.id,
+            models.GroupMember.status == 'accepted'
         ).count()
 
         if other_members_count > 0:
@@ -408,22 +517,29 @@ def leave_group(group_id):
             other_admin = models.GroupMember.query.filter(
                 models.GroupMember.group_id == group_id,
                 models.GroupMember.user_id != current_user.id,
-                models.GroupMember.role == 'admin'
+                models.GroupMember.role == 'admin',
+                models.GroupMember.status == 'accepted'
             ).first()
             
             if not other_admin:
                 flash("You cannot leave the group as the only admin while other members exist. Promote someone else first.", "danger")
                 return redirect(url_for("view_group", group_id=group_id))
 
-    db.session.delete(membership)
-    db.session.commit()
-    
-    # Clean up empty group
-    if not group.members:
-        db.session.delete(group)
+    try:
+        db.session.delete(membership)
         db.session.commit()
         
-    flash("You have left the group.", "info")
+        # Clean up empty group (check both accepted members and pending invites)
+        remaining_count = models.GroupMember.query.filter_by(group_id=group_id).count()
+        if remaining_count == 0:
+            db.session.delete(group)
+            db.session.commit()
+        
+        flash("You have left the group.", "info")
+    except Exception as e:
+        db.session.rollback()
+        flash("An error occurred while leaving the group.", "danger")
+    
     return redirect(url_for("groups"))
 
 
@@ -431,10 +547,8 @@ def leave_group(group_id):
 @login_required
 def invite_member(group_id):
     group = models.Group.query.get_or_404(group_id)
-    # Check if current user is member (assume any member can invite for now?)
-    # or strict to admin? The prompt didn't specify restrictive invite permissions, but implied general "allow for users to be invited".
-    # Let's verify membership at least.
-    me_member = models.GroupMember.query.filter_by(group_id=group.id, user_id=current_user.id).first()
+    # Check if current user is an accepted member
+    me_member = models.GroupMember.query.filter_by(group_id=group.id, user_id=current_user.id, status='accepted').first()
     if not me_member:
         flash("Unauthorized.", "danger")
         return redirect(url_for("groups"))
@@ -450,64 +564,204 @@ def invite_member(group_id):
          flash("User not found.", "danger")
          return redirect(url_for("view_group", group_id=group_id))
     
-    # Check if already member
+    # Check if already member or has pending invite
     exists = models.GroupMember.query.filter_by(group_id=group.id, user_id=user_to_add.id).first()
     if exists:
-        flash("User is already in the group.", "info")
+        if exists.status == 'pending':
+            flash("User already has a pending invite.", "info")
+        else:
+            flash("User is already in the group.", "info")
         return redirect(url_for("view_group", group_id=group_id))
 
-    new_member = models.GroupMember(group_id=group.id, user_id=user_to_add.id, role='member')
-    db.session.add(new_member)
-    db.session.commit()
+    try:
+        new_member = models.GroupMember(group_id=group.id, user_id=user_to_add.id, role='member', status='pending')
+        db.session.add(new_member)
+        db.session.commit()
+        flash(f"Invite sent to @{username}!", "success")
+    except Exception as e:
+        db.session.rollback()
+        flash("An error occurred while sending the invite.", "danger")
     
-    flash(f"@{username} added to the group!", "success")
     return redirect(url_for("view_group", group_id=group_id))
+
+
+@app.route('/groups/invite/<int:group_id>/accept', methods=['POST'])
+@login_required
+def accept_invite(group_id):
+    membership = models.GroupMember.query.filter_by(
+        group_id=group_id,
+        user_id=current_user.id,
+        status='pending'
+    ).first_or_404()
+    
+    try:
+        membership.status = 'accepted'
+        db.session.commit()
+        flash("You have joined the group!", "success")
+        return redirect(url_for("view_group", group_id=group_id))
+    except Exception as e:
+        db.session.rollback()
+        flash("An error occurred while accepting the invite.", "danger")
+        return redirect(url_for("groups"))
+
+
+@app.route('/groups/invite/<int:group_id>/decline', methods=['POST'])
+@login_required
+def decline_invite(group_id):
+    membership = models.GroupMember.query.filter_by(
+        group_id=group_id,
+        user_id=current_user.id,
+        status='pending'
+    ).first_or_404()
+    
+    try:
+        db.session.delete(membership)
+        db.session.commit()
+        flash("Invite declined.", "info")
+    except Exception as e:
+        db.session.rollback()
+        flash("An error occurred while declining the invite.", "danger")
+    
+    return redirect(url_for("groups"))
 
 
 @app.route('/groups/kick/<int:group_id>/<int:user_id>', methods=['POST'])
 @login_required
 def kick_member(group_id, user_id):
     # Check permissions
-    me_member = models.GroupMember.query.filter_by(group_id=group_id, user_id=current_user.id).first()
+    me_member = models.GroupMember.query.filter_by(group_id=group_id, user_id=current_user.id, status='accepted').first()
     if not me_member or me_member.role != 'admin':
-        flash("Only admins can kick members.", "danger")
+        flash("Only admins can kick members or revoke invites.", "danger")
         return redirect(url_for("view_group", group_id=group_id))
     
     target_member = models.GroupMember.query.filter_by(group_id=group_id, user_id=user_id).first_or_404()
-    if target_member.role == 'admin':
-         flash("Cannot kick another admin.", "danger") # Simple rule, or allow if multiple admins? Let's stay safe.
+    
+    # Don't allow kicking other admins (but can revoke pending admin invites)
+    if target_member.role == 'admin' and target_member.status == 'accepted':
+         flash("Cannot kick another admin.", "danger")
          return redirect(url_for("view_group", group_id=group_id))
 
-    db.session.delete(target_member)
-    db.session.commit()
-    flash("Member removed.", "success")
+    try:
+        db.session.delete(target_member)
+        db.session.commit()
+        if target_member.status == 'pending':
+            flash("Invite revoked.", "success")
+        else:
+            flash("Member removed.", "success")
+    except Exception as e:
+        db.session.rollback()
+        flash("An error occurred while removing the member.", "danger")
+    
     return redirect(url_for("view_group", group_id=group_id))
-
 
 @app.route('/groups/promote/<int:group_id>/<int:user_id>', methods=['POST'])
 @login_required
 def promote_member(group_id, user_id):
     # Check permissions
-    me_member = models.GroupMember.query.filter_by(group_id=group_id, user_id=current_user.id).first()
+    me_member = models.GroupMember.query.filter_by(group_id=group_id, user_id=current_user.id, status='accepted').first()
     if not me_member or me_member.role != 'admin':
         flash("Only admins can promote members.", "danger")
         return redirect(url_for("view_group", group_id=group_id))
     
-    target_member = models.GroupMember.query.filter_by(group_id=group_id, user_id=user_id).first_or_404()
-    target_member.role = 'admin'
-    db.session.commit()
-    flash(f"{target_member.user.username} promoted to Admin!", "success")
+    target_member = models.GroupMember.query.filter_by(group_id=group_id, user_id=user_id, status='accepted').first_or_404()
+    
+    try:
+        target_member.role = 'admin'
+        db.session.commit()
+        flash(f"{target_member.user.username} promoted to Admin!", "success")
+    except Exception as e:
+        db.session.rollback()
+        flash("An error occurred while promoting the member.", "danger")
+    
+    return redirect(url_for("view_group", group_id=group_id))
+
+
+@app.route('/groups/<int:group_id>/update_description', methods=['POST'])
+@login_required
+def update_group_description(group_id):
+    # Check if user is an accepted admin
+    me_member = models.GroupMember.query.filter_by(group_id=group_id, user_id=current_user.id, status='accepted').first()
+    if not me_member or me_member.role != 'admin':
+        flash("Only admins can update the group description.", "danger")
+        return redirect(url_for("view_group", group_id=group_id))
+    
+    group = models.Group.query.get_or_404(group_id)
+    description = request.form.get('description', '').strip()
+    
+    try:
+        group.description = description
+        db.session.commit()
+        flash("Group description updated successfully!", "success")
+    except Exception as e:
+        db.session.rollback()
+        flash("An error occurred while updating the description.", "danger")
+    
+    return redirect(url_for("view_group", group_id=group_id))
+
+
+@app.route('/groups/<int:group_id>/update_photo', methods=['POST'])
+@login_required
+def update_group_photo(group_id):
+    # Check if user is an accepted admin
+    me_member = models.GroupMember.query.filter_by(group_id=group_id, user_id=current_user.id, status='accepted').first()
+    if not me_member or me_member.role != 'admin':
+        flash("Only admins can update the group photo.", "danger")
+        return redirect(url_for("view_group", group_id=group_id))
+    
+    group = models.Group.query.get_or_404(group_id)
+    
+    if 'group_photo' not in request.files:
+        flash("No file selected.", "danger")
+        return redirect(url_for("view_group", group_id=group_id))
+    
+    file = request.files['group_photo']
+    if not file.filename:
+        flash("No file selected.", "danger")
+        return redirect(url_for("view_group", group_id=group_id))
+    
+    # Validate file extension
+    file_ext = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else ''
+    if file_ext not in ALLOWED_EXTENSIONS:
+        flash(f"Invalid file type. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}", "danger")
+        return redirect(url_for("view_group", group_id=group_id))
+    
+    filename = secure_filename(file.filename)
+    unique_filename = f"g{group.id}_{filename}"
+    
+    # Ensure directory exists
+    if not os.path.exists(app.config['UPLOAD_FOLDER']):
+        os.makedirs(app.config['UPLOAD_FOLDER'])
+    
+    try:
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
+        file.save(file_path)
+        group.profile_image = unique_filename
+        db.session.commit()
+        flash("Group photo updated!", "success")
+    except Exception as e:
+        db.session.rollback()
+        flash("An error occurred while uploading the group photo.", "danger")
+    
     return redirect(url_for("view_group", group_id=group_id))
 
 
 @app.route('/groups/<int:group_id>')
 @login_required
 def view_group(group_id):
-    group = models.Group.query.get_or_404(group_id)
-    # Check membership
+    group = models.Group.query.get(group_id)
+    # Check if group exists and user is a member (use same message for both to prevent enumeration)
+    if not group:
+        flash("Group not found.", "danger")
+        return redirect(url_for("groups"))
+    
     member = models.GroupMember.query.filter_by(group_id=group.id, user_id=current_user.id).first()
     if not member:
-        flash("You are not a member of this group.", "danger")
+        flash("Group not found.", "danger")
+        return redirect(url_for("groups"))
+    
+    # If invite is still pending, redirect to groups page to accept/decline
+    if member.status == 'pending':
+        flash("You have a pending invite to this group. Please accept or decline.", "info")
         return redirect(url_for("groups"))
     
     # Context Logic
@@ -537,13 +791,23 @@ def view_group(group_id):
     for f in pending_query:
         pending_ids.add(f.receiver_id)
 
+    # Sort members by seniority (earliest joined first) - only accepted members
+    accepted_members = [m for m in group.members if m.status == 'accepted']
+    sorted_members = sorted(accepted_members, key=lambda m: m.joined_at)
+    
+    # Get pending invites for admin view
+    pending_invites = [m for m in group.members if m.status == 'pending']
+    
     return render_template(
         "group_detail.html", 
         group=group, 
         membership=member,
         is_admin=is_admin,
         friend_ids=friend_ids,
-        pending_ids=pending_ids
+        pending_ids=pending_ids,
+        sorted_members=sorted_members,
+        pending_invites=pending_invites,
+        active_page='groups'
     )
 
 
@@ -592,14 +856,16 @@ def register():
         )
         user.set_password(password)
 
-        db.session.add(user)
-        db.session.commit()
-
-        flash("Account created successfully.", "success")
-
-        login_user(user)
-        
-        return redirect("/")
+        try:
+            db.session.add(user)
+            db.session.commit()
+            flash("Account created successfully.", "success")
+            login_user(user)
+            return redirect("/")
+        except Exception as e:
+            db.session.rollback()
+            flash("An error occurred while creating your account.", "danger")
+            return render_template("register.html")
     
     return render_template('register.html')
 
@@ -610,25 +876,32 @@ def me():
         if 'profile_pic' in request.files:
             file = request.files['profile_pic']
             if file.filename:
+                # Validate file extension
+                file_ext = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else ''
+                if file_ext not in ALLOWED_EXTENSIONS:
+                    flash(f"Invalid file type. Allowed types: {', '.join(ALLOWED_EXTENSIONS)}", "danger")
+                    return redirect(url_for('me'))
+                
                 filename = secure_filename(file.filename)
-                # Prefix with user_id to keep it unique per user
                 unique_filename = f"u{current_user.id}_{filename}"
                 
                 # Ensure directory exists
                 if not os.path.exists(app.config['UPLOAD_FOLDER']):
                     os.makedirs(app.config['UPLOAD_FOLDER'])
                 
-                file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
-                file.save(file_path)
-                
-                current_user.profile_image = unique_filename
-                db.session.commit()
-                flash("Profile picture updated!", "success")
+                try:
+                    file_path = os.path.join(app.config['UPLOAD_FOLDER'], unique_filename)
+                    file.save(file_path)
+                    current_user.profile_image = unique_filename
+                    db.session.commit()
+                    flash("Profile picture updated!", "success")
+                except Exception as e:
+                    db.session.rollback()
+                    flash("An error occurred while uploading your profile picture.", "danger")
         
-        # Determine if we have other fields to update (not requested, but good practice)
         return redirect(url_for('me'))
 
-    return render_template('me.html')
+    return render_template('me.html', active_page='profile')
 
 @app.route("/logout")
 @login_required
