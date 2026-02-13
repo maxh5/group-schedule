@@ -354,3 +354,92 @@
     /* :root { --day-width: 92px; --canvas-height:520px; } */
     .container{ width: 100%; overflow-x: auto; }
   }
+
+  /* Mobile: Make calendar fill the screen */
+  @media (max-width: 767px) {
+    .main-content {
+      display: flex;
+      flex-direction: column;
+      padding: 12px;
+      padding-bottom: 0;
+      overflow: hidden;
+    }
+
+    /* Reserve space for the fixed bottom bar */
+    .main-content::after {
+      content: '';
+      display: block;
+      flex-shrink: 0;
+      height: 160px; /* Account for bottom navigation bar height + spacing */
+    }
+
+    .container {
+      flex: 1;
+      min-height: 0;
+      padding: 12px;
+    }
+
+    .week {
+      flex: 1;
+      min-height: 0;
+    }
+
+    .time-column {
+      flex: 0 0 40px;
+      width: 40px;
+      font-size: 10px;
+    }
+
+    .day {
+      padding: 6px;
+    }
+
+    .day-label {
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+
+    .header {
+      margin-bottom: 8px;
+    }
+
+    .header-top {
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .title-group {
+      min-width: unset;
+    }
+
+    .current-status {
+      min-width: unset;
+      flex: 1 1 auto;
+      order: 3;
+      width: 100%;
+    }
+
+    .status-text {
+      font-size: 14px;
+    }
+
+    .title {
+      font-size: 16px;
+    }
+
+    .date-range {
+      font-size: 13px;
+      min-width: unset;
+    }
+
+    .view-controls {
+      font-size: 12px;
+      padding: 4px 8px;
+      gap: 8px;
+    }
+
+    .icon-btn {
+      width: 28px;
+      height: 28px;
+    }
+  }

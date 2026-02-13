@@ -25,3 +25,7 @@
 ### TEST
 - Weird splashes that come late
 - make light mode calendar view better
+
+- add manual class add, fix bug when non-numeric characters are written
+
+CURRENT: CONTINUE TO FIX MOBILE CALENDAR VIEW

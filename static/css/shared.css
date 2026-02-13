@@ -110,11 +110,39 @@ body {
     gap: 8px;
     overflow-x: auto;
     flex: 1;
-    /* Hide scrollbar */
-    scrollbar-width: none; 
-    -ms-overflow-style: none;
+    /* Show scrollbar on mobile for better UX */
+    scrollbar-width: thin; 
+    scrollbar-color: var(--border-color) transparent;
+    /* Enable momentum scrolling on iOS */
+    -webkit-overflow-scrolling: touch;
 }
-.sidebar-nav::-webkit-scrollbar { display: none; }
+
+/* Webkit scrollbar styling for mobile */
+.sidebar-nav::-webkit-scrollbar {
+    height: 4px;
+}
+
+.sidebar-nav::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.sidebar-nav::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+}
+
+.sidebar-nav::-webkit-scrollbar-thumb:hover {
+    background: var(--muted);
+}
+
+/* Hide scrollbar on desktop */
+@media (min-width: 768px) {
+    .sidebar-nav {
+        scrollbar-width: none; 
+        -ms-overflow-style: none;
+    }
+    .sidebar-nav::-webkit-scrollbar { display: none; }
+}
 
 .nav-item {
     display: flex;
@@ -185,8 +213,40 @@ body {
 }
 
 @media (max-width: 767px) {
+    .layout-wrapper {
+        height: 100vh;
+        height: 100dvh; /* Dynamic viewport height - accounts for mobile browser chrome */
+        min-height: 0; /* Override min-height: 100vh so it doesn't grow past screen */
+    }
+
     .main-content {
-        padding-bottom: 90px; /* Shift for bottom bar */
+        min-height: 0; /* Allow shrinking within flex */
+    }
+    
+    /* Ensure navbar icons are properly visible on mobile */
+    .sidebar {
+        padding: 8px 12px;
+        gap: 12px;
+        flex-shrink: 0;
+    }
+    
+    .nav-item {
+        padding: 6px 10px;
+        gap: 6px;
+        font-size: 13px;
+        flex-shrink: 0; /* Prevent items from shrinking */
+    }
+    
+    .nav-item .icon svg {
+        width: 20px;
+        height: 20px;
+        flex-shrink: 0;
+    }
+    
+    .user-avatar {
+        width: 42px;
+        height: 42px;
+        flex-shrink: 0;
     }
 }
 
@@ -851,12 +911,9 @@ h1, h2 {
     opacity: 1;
 }
 
-/* Mobile: Keep toggle at bottom of sidebar */
+/* Mobile: Hide dark mode toggle */
 @media (max-width: 767px) {
     .sidebar-dark-mode-toggle {
-        margin-top: 0;
-        padding: 0;
-        border: none;
-        margin-left: auto;
+        display: none;
     }
 }
