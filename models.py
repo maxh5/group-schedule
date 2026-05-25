@@ -1,4 +1,3 @@
-from werkzeug.security import generate_password_hash, check_password_hash
 from extras.extensions import db
 from flask_login import UserMixin
 from sqlalchemy import UniqueConstraint
@@ -11,36 +10,33 @@ class User(db.Model, UserMixin):
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     first_name = db.Column(db.String(25), nullable=False)
     last_name = db.Column(db.String(50), nullable=False)
-    
-    username = db.Column(db.String(30), unique=True, nullable=False)
+
+    # Public @handle for friend/group discovery (set after Google sign-in onboarding)
+    username = db.Column(db.String(30), unique=True, nullable=True)
     profile_image = db.Column(db.String(255), nullable=False, default='default.jpg')
 
-    password_hash = db.Column(db.String(255), nullable=False)
+    google_sub = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    email = db.Column(db.String(255), unique=True, nullable=False, index=True)
+    # OAuth offline access for Google Calendar API (nullable until consent grants refresh_token)
+    google_refresh_token = db.Column(db.Text, nullable=True)
 
     # Relationships:
     saved_sections = db.relationship(
         "UserCourse", back_populates="user", cascade="all, delete-orphan"
     )
-
-    # Friendship helper (simple lookup)
-    # This is a bit complex in pure SQLAlchemy relationships for self-referential many-to-many 
-    # with an association object, so we might handle some logic in methods or properties.
+    linked_calendars = db.relationship(
+        "UserLinkedCalendar",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self):
         return f"<{self.full_name} (id={self.id})>"
 
-    # Helpers:
-    def set_password(self, password: str):
-        """Hash & store password."""
-        self.password_hash = generate_password_hash(password)
-
-    def check_password(self, password: str) -> bool:
-        """Return True if password matches stored hash."""
-        return check_password_hash(self.password_hash, password)
-    
     @property
     def full_name(self) -> str:
-        return f"{self.first_name} {self.last_name}"    
+        return f"{self.first_name} {self.last_name}".strip() or (self.email or "User")
+
 
 class Friendship(db.Model):
     """Tracks friend requests and accepted friendships"""
@@ -49,10 +45,9 @@ class Friendship(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     requester_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     receiver_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    status = db.Column(db.String(20), default="pending", nullable=False) # pending, accepted
+    status = db.Column(db.String(20), default="pending", nullable=False)  # pending, accepted
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    # Relationships are tricky here. It's often easier to query manually or use db.relationship with foreign_keys
     requester = db.relationship("User", foreign_keys=[requester_id], backref="sent_requests")
     receiver = db.relationship("User", foreign_keys=[receiver_id], backref="received_requests")
 
@@ -69,7 +64,7 @@ class Group(db.Model):
     profile_image = db.Column(db.String(255), nullable=False, default='default_group.jpg')
     created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    
+
     members = db.relationship("GroupMember", back_populates="group", cascade="all, delete-orphan")
 
 
@@ -80,15 +75,33 @@ class GroupMember(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     group_id = db.Column(db.Integer, db.ForeignKey("groups.id"), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    role = db.Column(db.String(20), default="member") # admin, member
-    status = db.Column(db.String(20), default="pending") # pending, accepted
+    role = db.Column(db.String(20), default="member")  # admin, member
+    status = db.Column(db.String(20), default="pending")  # pending, accepted
     joined_at = db.Column(db.DateTime, default=datetime.utcnow)
-    display_order = db.Column(db.Integer, default=0)  # Custom order for each user
+    display_order = db.Column(db.Integer, default=0)
 
     group = db.relationship("Group", back_populates="members")
     user = db.relationship("User", backref="groups")
 
     __table_args__ = (UniqueConstraint("group_id", "user_id", name="uq_group_member"),)
+
+
+class UserLinkedCalendar(db.Model):
+    """Per-user calendar source (Google calendarList id) and main-view visibility."""
+
+    __tablename__ = "user_linked_calendars"
+    __table_args__ = (UniqueConstraint("user_id", "provider", "external_id", name="uq_user_provider_cal"),)
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    provider = db.Column(db.String(32), nullable=False, default="google")
+    external_id = db.Column(db.String(512), nullable=False)
+    summary = db.Column(db.String(512), nullable=False, default="")
+    background_color = db.Column(db.String(32), nullable=True)
+    included_in_main_view = db.Column(db.Boolean, nullable=False, default=True)
+
+    user = db.relationship("User", back_populates="linked_calendars")
+
 
 class Course(db.Model):
     """Course itself"""
@@ -115,7 +128,6 @@ class CourseSection(db.Model):
     start_date = db.Column(db.Date, nullable=False)
     end_date = db.Column(db.Date, nullable=False)
 
-    # Relationships
     course = db.relationship("Course", back_populates="sections")
     enrolled_users = db.relationship("UserCourse", back_populates="section", cascade="all, delete-orphan")
 
@@ -134,28 +146,19 @@ class UserCourse(db.Model):
     events = db.relationship("Event", back_populates="user_course", cascade="all, delete-orphan")
 
     def create_events(self, session):
-        """Create event rows based on this UserCourse connection.
-
-        This will create one Event per meeting date derived from the linked
-        CourseSection and add them to the provided SQLAlchemy session (or
-        `db.session` if none is provided).
-        """
-        user = self.user
+        """Create event rows based on this UserCourse connection."""
         section = self.section
         start_date = self.section.start_date
         end_date = self.section.end_date
         start_time = self.section.start_time
         end_time = self.section.end_time
 
-        # Map days to values (e.g. M = 1)
         days = section.days_of_week.split()
         mapping = {"M": 0, "T": 1, "W": 2, "Th": 3, "F": 4}
         dayValues = set(mapping[day] for day in days if day in mapping)
 
-        # Idempotency: delete previously generated events for this user+section
         session.query(Event).filter_by(user_course_id=self.id).delete(synchronize_session=False)
 
-        # For each day, find first occurance and then increment by 7
         for target_day in dayValues:
             delta_days = (target_day - start_date.weekday() + 7) % 7
             occurence_date = start_date + timedelta(days=delta_days)
@@ -163,11 +166,11 @@ class UserCourse(db.Model):
                 start_dt = datetime.combine(occurence_date, start_time)
                 end_dt = datetime.combine(occurence_date, end_time)
                 ev = Event(
-                    user_id = self.user_id,
-                    title = section.course.title,
-                    start = start_dt,
-                    end = end_dt,
-                    user_course_id = self.id
+                    user_id=self.user_id,
+                    title=section.course.title,
+                    start=start_dt,
+                    end=end_dt,
+                    user_course_id=self.id
                 )
                 session.add(ev)
                 occurence_date += timedelta(days=7)

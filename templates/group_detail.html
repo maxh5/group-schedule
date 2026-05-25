@@ -83,7 +83,7 @@
             Invite Member
         </h3>
         <form action="{{ url_for('invite_member', group_id=group.id) }}" method="post" style="display: flex; gap: 8px;">
-            <input type="text" name="username" class="form-input" placeholder="Enter username..." required style="flex: 1; max-width: 300px; padding: 8px 12px; font-size: 14px; background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text-color);">
+            <input type="text" name="handle" class="form-input" placeholder="Enter handle (without @)..." required style="flex: 1; max-width: 300px; padding: 8px 12px; font-size: 14px; background: var(--input-bg); border: 1px solid var(--input-border); color: var(--text-color);">
             <button type="submit" class="btn btn-primary small">Invite</button>
         </form>
     </div>
@@ -159,7 +159,7 @@
                              <span style="font-size: 11px; color: var(--muted); background: var(--hover-bg); padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border-color);">Request Sent</span>
                         {% else %}
                             <form action="{{ url_for('friends') }}" method="post" style="margin:0;">
-                                <input type="hidden" name="username" value="{{ member.user.username }}">
+                                <input type="hidden" name="friend_user_id" value="{{ member.user.id }}">
                                 <button type="submit" class="btn small" style="padding: 4px 8px; font-size: 11px; background: var(--card-bg); border: 1px solid var(--border-color); color: var(--text-color);">
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
                                     Add Friend

@@ -1,11 +1,14 @@
-from flask import Flask, render_template, request, redirect, flash, url_for, jsonify
+from flask import Flask, render_template, request, redirect, flash, url_for, jsonify, session
 from flask_login import logout_user, login_required, login_user, current_user
 import os
+import re
+import secrets
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import or_
+from sqlalchemy import or_, inspect, text
 from datetime import datetime, timedelta
+from authlib.integrations.flask_client import OAuth
 
 
 # ----- Load environment -----
@@ -27,10 +30,15 @@ USER_COLORS = [
 # ----- App config -----
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-secret')
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///dev.db')
+_database_url = (os.environ.get('DATABASE_URL') or '').strip()
+app.config['SQLALCHEMY_DATABASE_URI'] = _database_url or 'sqlite:///dev.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
+app.config['GOOGLE_CLIENT_ID'] = os.environ.get('GOOGLE_CLIENT_ID', '')
+app.config['GOOGLE_CLIENT_SECRET'] = os.environ.get('GOOGLE_CLIENT_SECRET', '')
+if os.environ.get('FLASK_SESSION_COOKIE_SECURE', '').lower() in ('1', 'true', 'yes'):
+    app.config['SESSION_COOKIE_SECURE'] = True
 
 
 # ----- Imports -----
@@ -38,8 +46,32 @@ app.config['MAX_CONTENT_LENGTH'] = MAX_FILE_SIZE
 from extras.extensions import db, login_manager
 db.init_app(app)
 login_manager.init_app(app)
+login_manager.login_view = 'login'
+
+
+@login_manager.unauthorized_handler
+def _login_manager_unauthorized():
+    return redirect(url_for('login', next=request.path))
+
+
+oauth = OAuth(app)
+if app.config['GOOGLE_CLIENT_ID'] and app.config['GOOGLE_CLIENT_SECRET']:
+    oauth.register(
+        name='google',
+        client_id=app.config['GOOGLE_CLIENT_ID'],
+        client_secret=app.config['GOOGLE_CLIENT_SECRET'],
+        server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+        client_kwargs={
+            'scope': (
+                'openid email profile '
+                'https://www.googleapis.com/auth/calendar.readonly'
+            ),
+        },
+    )
 """ASU API"""
 from extras.api import fetch_class_by_section, parse_class_item
+"""Google Calendar"""
+from extras import google_calendar as gcal
 """Models"""
 import models
 
@@ -48,6 +80,10 @@ import models
 def get_user_color(user_id):
     """Generate consistent color for a user based on their ID."""
     return USER_COLORS[user_id % len(USER_COLORS)]
+
+
+def _google_oauth_configured():
+    return bool(app.config.get('GOOGLE_CLIENT_ID') and app.config.get('GOOGLE_CLIENT_SECRET'))
 
 
 def get_related_user_ids(user_id):
@@ -95,9 +131,165 @@ def get_related_user_ids(user_id):
     return all_related_user_ids, friends_ids, groups_data
 
 
+def _ensure_calendar_schema():
+    """Add new columns/tables on existing SQLite/Postgres DBs (create_all alone is insufficient for ALTER)."""
+    if getattr(app, '_calendar_schema_ensured', False):
+        return
+    try:
+        inspector = inspect(db.engine)
+        tables = inspector.get_table_names()
+        if 'users' in tables:
+            cols = {c['name'] for c in inspector.get_columns('users')}
+            if 'google_refresh_token' not in cols:
+                with db.engine.begin() as conn:
+                    conn.execute(text('ALTER TABLE users ADD COLUMN google_refresh_token TEXT'))
+        db.create_all()
+    except Exception:
+        app.logger.exception('Calendar schema migration failed')
+    app._calendar_schema_ensured = True
+
+
+def _local_tzinfo():
+    return datetime.now().astimezone().tzinfo
+
+
+def build_week_events_for_users(user_ids, week_start, week_end):
+    """
+    Merge DB Event rows (class-derived) with Google Calendar events for enabled linked calendars.
+    week_end is exclusive (first day after the displayed week).
+    """
+    _ensure_calendar_schema()
+    if not user_ids:
+        return []
+    uid_set = set(user_ids)
+    out = []
+
+    db_events = models.Event.query.filter(
+        models.Event.user_id.in_(uid_set),
+        models.Event.start >= week_start,
+        models.Event.start < week_end,
+    ).all()
+    for ev in db_events:
+        out.append({
+            'day': ev.start.weekday(),
+            'start': ev.start.strftime('%H:%M'),
+            'end': ev.end.strftime('%H:%M'),
+            'person': ev.user_id,
+            'title': ev.title,
+        })
+
+    cid = app.config.get('GOOGLE_CLIENT_ID')
+    csec = app.config.get('GOOGLE_CLIENT_SECRET')
+    if not cid or not csec:
+        return out
+
+    users = models.User.query.filter(models.User.id.in_(uid_set)).all()
+    local_tz = _local_tzinfo()
+    t_min, t_max = gcal.week_bounds_rfc3339_utc(week_start, week_end)
+
+    for user in users:
+        if not user.google_refresh_token:
+            continue
+        try:
+            access = gcal.refresh_google_access_token(cid, csec, user.google_refresh_token)
+        except Exception:
+            app.logger.warning('Google token refresh failed for user %s', user.id, exc_info=True)
+            continue
+
+        cal_rows = (
+            models.UserLinkedCalendar.query.filter_by(
+                user_id=user.id, provider='google', included_in_main_view=True
+            ).all()
+        )
+        calendar_ids = [r.external_id for r in cal_rows]
+        if not calendar_ids:
+            has_any = models.UserLinkedCalendar.query.filter_by(
+                user_id=user.id, provider='google'
+            ).first()
+            if not has_any:
+                calendar_ids = ['primary']
+            else:
+                continue
+
+        for cal_id in calendar_ids:
+            try:
+                raw = gcal.events_list_for_calendar(access, cal_id, t_min, t_max)
+            except Exception:
+                app.logger.warning(
+                    'Google events.list failed user=%s calendar=%s', user.id, cal_id, exc_info=True
+                )
+                continue
+            for slot in gcal.google_events_to_week_slots(raw, week_start, week_end, local_tz):
+                out.append({
+                    'day': slot['day'],
+                    'start': slot['start'],
+                    'end': slot['end'],
+                    'person': user.id,
+                    'title': slot['title'],
+                })
+    return out
+
+
+def sync_google_calendar_list_rows(user):
+    """Upsert UserLinkedCalendar from Google calendarList (requires valid refresh token)."""
+    cid = app.config.get('GOOGLE_CLIENT_ID')
+    csec = app.config.get('GOOGLE_CLIENT_SECRET')
+    if not cid or not csec or not user.google_refresh_token:
+        return False, 'Google Calendar is not connected. Use “Grant calendar access” below.'
+    access = gcal.refresh_google_access_token(cid, csec, user.google_refresh_token)
+    items = gcal.fetch_calendar_list(access)
+    for item in items:
+        eid = item.get('id')
+        if not eid:
+            continue
+        summary = (item.get('summary') or item.get('summaryOverride') or eid)[:512]
+        bg = item.get('backgroundColor')
+        selected = item.get('selected', True)
+        row = models.UserLinkedCalendar.query.filter_by(
+            user_id=user.id, provider='google', external_id=eid
+        ).first()
+        if row:
+            row.summary = summary
+            row.background_color = (bg or '')[:32] if bg else None
+        else:
+            db.session.add(
+                models.UserLinkedCalendar(
+                    user_id=user.id,
+                    provider='google',
+                    external_id=eid,
+                    summary=summary,
+                    background_color=(bg or '')[:32] if bg else None,
+                    included_in_main_view=bool(selected),
+                )
+            )
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return False, 'Could not save calendar list (try sync again).'
+    return True, None
+
+
 @login_manager.user_loader
 def load_user(user_id):
     return models.User.query.get(int(user_id))
+
+
+_ONBOARDING_ALLOWED_ENDPOINTS = frozenset({
+    'google_login', 'google_callback', 'complete_profile', 'logout', 'static',
+})
+
+
+@app.before_request
+def _redirect_incomplete_profile():
+    if request.endpoint == 'static':
+        return
+    if not current_user.is_authenticated:
+        return
+    if current_user.username:
+        return
+    if request.endpoint not in _ONBOARDING_ALLOWED_ENDPOINTS:
+        return redirect(url_for('complete_profile'))
 
 
 # ----- Routes -----
@@ -126,23 +318,7 @@ def index():
     start_of_week = today - timedelta(days=today.weekday())
     end_of_week = start_of_week + timedelta(days=7)
 
-    # Query events for the week
-    relevant_events = models.Event.query.filter(
-        models.Event.user_id.in_(all_related_user_ids),
-        models.Event.start >= start_of_week,
-        models.Event.start < end_of_week
-    ).all()
-
-    events_data = [
-        {
-            "day": ev.start.weekday(),
-            "start": ev.start.strftime("%H:%M"),
-            "end": ev.end.strftime("%H:%M"),
-            "person": ev.user_id,
-            "title": ev.title
-        }
-        for ev in relevant_events
-    ]
+    events_data = build_week_events_for_users(all_related_user_ids, start_of_week, end_of_week)
 
     return render_template(
         'calendar.html',
@@ -180,25 +356,105 @@ def get_events():
     # Get all related user IDs using helper function
     all_related_user_ids, _, _ = get_related_user_ids(current_user.id)
     
-    # Query events for the specified week
-    relevant_events = models.Event.query.filter(
-        models.Event.user_id.in_(all_related_user_ids),
-        models.Event.start >= week_start,
-        models.Event.start < week_end
-    ).all()
-    
-    events_data = [
-        {
-            "day": ev.start.weekday(),
-            "start": ev.start.strftime("%H:%M"),
-            "end": ev.end.strftime("%H:%M"),
-            "person": ev.user_id,
-            "title": ev.title
-        }
-        for ev in relevant_events
-    ]
+    events_data = build_week_events_for_users(all_related_user_ids, week_start, week_end)
     
     return jsonify({"events": events_data})
+
+
+@app.route('/calendar-settings', methods=['GET', 'POST'])
+@login_required
+def calendar_settings():
+    _ensure_calendar_schema()
+    if not _google_oauth_configured():
+        flash('Google OAuth is not configured.', 'danger')
+        return redirect(url_for('index'))
+
+    if request.method == 'POST':
+        action = request.form.get('action') or ''
+        if action == 'sync_google':
+            ok, err = sync_google_calendar_list_rows(current_user)
+            if ok:
+                flash('Calendars synced from Google.', 'success')
+            else:
+                flash(err or 'Could not sync calendars.', 'danger')
+        elif action == 'toggle_calendar':
+            eid = request.form.get('external_id') or ''
+            on = request.form.get('included') == '1'
+            row = models.UserLinkedCalendar.query.filter_by(
+                user_id=current_user.id, provider='google', external_id=eid
+            ).first()
+            if row:
+                row.included_in_main_view = on
+                db.session.commit()
+        elif action == 'add_google_calendar':
+            raw = (request.form.get('calendar_id') or '').strip()
+            if not raw:
+                flash('Enter a calendar ID.', 'danger')
+            elif not current_user.google_refresh_token:
+                flash('Connect Google first.', 'danger')
+            else:
+                cid_cfg = app.config.get('GOOGLE_CLIENT_ID')
+                csec = app.config.get('GOOGLE_CLIENT_SECRET')
+                try:
+                    access = gcal.refresh_google_access_token(
+                        cid_cfg, csec, current_user.google_refresh_token
+                    )
+                    meta = gcal.fetch_calendar_metadata(access, raw)
+                    if not meta:
+                        flash('Calendar not found or this account does not have access.', 'danger')
+                    else:
+                        eid = meta.get('id') or raw
+                        summary = (meta.get('summary') or eid)[:512]
+                        existing = models.UserLinkedCalendar.query.filter_by(
+                            user_id=current_user.id, provider='google', external_id=eid
+                        ).first()
+                        if existing:
+                            flash('That calendar is already in your list.', 'info')
+                        else:
+                            db.session.add(
+                                models.UserLinkedCalendar(
+                                    user_id=current_user.id,
+                                    provider='google',
+                                    external_id=eid,
+                                    summary=summary,
+                                    background_color=None,
+                                    included_in_main_view=True,
+                                )
+                            )
+                            db.session.commit()
+                            flash('Calendar added.', 'success')
+                except Exception:
+                    app.logger.exception('add_google_calendar failed')
+                    flash('Could not add calendar. Check the ID and try again.', 'danger')
+        return redirect(url_for('calendar_settings'))
+
+    rows = (
+        models.UserLinkedCalendar.query.filter_by(user_id=current_user.id, provider='google')
+        .order_by(models.UserLinkedCalendar.summary)
+        .all()
+    )
+    has_token = bool(current_user.google_refresh_token)
+    # Always pass exactly one "slot" so the template never hits an empty for-loop
+    # (which would render a blank main area when connected but google_accounts was empty).
+    google_accounts = [
+        {
+            'connected': has_token,
+            'email': current_user.email,
+            'calendars': rows if has_token else [],
+        }
+    ]
+    reconnect_url = url_for(
+        'google_login',
+        next=url_for('calendar_settings'),
+        reconsent='1',
+    )
+    return render_template(
+        'calendar_settings.html',
+        google_accounts=google_accounts,
+        reconnect_url=reconnect_url,
+        active_page='calendar_settings',
+    )
+
 
 @app.route('/classes', methods=['GET', 'POST'])
 @login_required
@@ -305,17 +561,27 @@ def remove_class(section_id):
 @login_required
 def friends():
     if request.method == 'POST':
-        # Add Friend Logic
-        username = request.form.get("username", "").strip()
-        if not username:
-            flash("Please enter a username.", "danger")
+        # Add Friend Logic: by @handle, or by user id (e.g. from group member list)
+        friend_user_id = request.form.get("friend_user_id", type=int)
+        handle = (request.form.get("handle") or request.form.get("username") or "").strip().lstrip("@")
+
+        if not friend_user_id and not handle:
+            flash("Please enter a handle.", "danger")
             return redirect(url_for("friends"))
 
-        target_user = models.User.query.filter_by(username=username).first()
+        if friend_user_id:
+            target_user = models.User.query.get(friend_user_id)
+        else:
+            target_user = models.User.query.filter_by(username=handle).first()
+
         if not target_user:
             flash("User not found.", "danger")
             return redirect(url_for("friends"))
-        
+
+        if not target_user.username:
+            flash("That account has not finished setup yet.", "danger")
+            return redirect(url_for("friends"))
+
         if target_user.id == current_user.id:
             flash("You cannot add yourself.", "danger")
             return redirect(url_for("friends"))
@@ -553,16 +819,16 @@ def invite_member(group_id):
         flash("Unauthorized.", "danger")
         return redirect(url_for("groups"))
 
-    username = request.form.get("username", "").strip()
-    if not username:
-        flash("Please enter a username.", "danger")
+    handle = (request.form.get("handle") or request.form.get("username") or "").strip().lstrip("@")
+    if not handle:
+        flash("Please enter a handle.", "danger")
         return redirect(url_for("view_group", group_id=group_id))
 
-    user_to_add = models.User.query.filter_by(username=username).first()
-    
+    user_to_add = models.User.query.filter_by(username=handle).first()
+
     if not user_to_add:
-         flash("User not found.", "danger")
-         return redirect(url_for("view_group", group_id=group_id))
+        flash("User not found.", "danger")
+        return redirect(url_for("view_group", group_id=group_id))
     
     # Check if already member or has pending invite
     exists = models.GroupMember.query.filter_by(group_id=group.id, user_id=user_to_add.id).first()
@@ -577,7 +843,7 @@ def invite_member(group_id):
         new_member = models.GroupMember(group_id=group.id, user_id=user_to_add.id, role='member', status='pending')
         db.session.add(new_member)
         db.session.commit()
-        flash(f"Invite sent to @{username}!", "success")
+        flash(f"Invite sent to @{handle}!", "success")
     except Exception as e:
         db.session.rollback()
         flash("An error occurred while sending the invite.", "danger")
@@ -668,7 +934,8 @@ def promote_member(group_id, user_id):
     try:
         target_member.role = 'admin'
         db.session.commit()
-        flash(f"{target_member.user.username} promoted to Admin!", "success")
+        label = target_member.user.username or target_member.user.email.split("@")[0]
+        flash(f"{label} promoted to Admin!", "success")
     except Exception as e:
         db.session.rollback()
         flash("An error occurred while promoting the member.", "danger")
@@ -812,62 +1079,157 @@ def view_group(group_id):
 
 
 # ----- Routes: AUTH -----
-@app.route('/login', methods=['GET', 'POST'])
+@app.route('/login', methods=['GET'])
 def login():
-    if request.method == "POST":
-        username = request.form["username"]
-        password = request.form["password"]
-        
-        user = models.User.query.filter_by(username=username).first()
+    if current_user.is_authenticated:
+        if current_user.username:
+            return redirect(url_for('index'))
+        return redirect(url_for('complete_profile'))
+    return render_template(
+        'login.html',
+        google_configured=_google_oauth_configured(),
+    )
 
-        if not user or not user.check_password(password):
-            flash("Invalid username or password.", "danger")
-            return render_template("login.html")
 
-        login_user(user)
-        flash("Logged in successfully!", "success")
-        return redirect("/")
-    # --- GET ---
-    return render_template('login.html')
+@app.route('/auth/google')
+def google_login():
+    if not _google_oauth_configured():
+        flash("Google sign-in is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.", "danger")
+        return redirect(url_for('login'))
+    google = oauth.create_client('google')
+    redirect_uri = os.environ.get('GOOGLE_OAUTH_REDIRECT_URI') or url_for('google_callback', _external=True)
+    session_nonce = secrets.token_urlsafe(16)
+    session['oidc_nonce'] = session_nonce
+    next_raw = request.args.get('next') or '/'
+    if not (isinstance(next_raw, str) and next_raw.startswith('/') and not next_raw.startswith('//')):
+        next_raw = '/'
+    session['oauth_next'] = next_raw
+    oauth_kwargs = {
+        'redirect_uri': redirect_uri,
+        'nonce': session_nonce,
+        'code_challenge_method': 'S256',
+        'access_type': 'offline',
+    }
+    if request.args.get('reconsent') == '1':
+        oauth_kwargs['prompt'] = 'consent'
+    elif current_user.is_authenticated and not getattr(current_user, 'google_refresh_token', None):
+        oauth_kwargs['prompt'] = 'consent'
+    return google.authorize_redirect(**oauth_kwargs)
 
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    if request.method == "POST":
 
-        first_name = request.form["first_name"]
-        last_name = request.form["last_name"]
-        username = request.form["username"]
-        password = request.form["password"]
-        confirm = request.form["confirm_password"]
+@app.route('/auth/google/callback')
+def google_callback():
+    if not _google_oauth_configured():
+        flash("Google sign-in is not configured.", "danger")
+        return redirect(url_for('login'))
+    google = oauth.create_client('google')
+    try:
+        token = google.authorize_access_token()
+    except Exception:
+        app.logger.exception("Google OAuth token exchange failed")
+        flash("Sign in with Google was cancelled or failed. Try again.", "danger")
+        return redirect(url_for('login'))
 
-        if password != confirm:
-            flash("Passwords do not match.", "danger")
-            return render_template("register.html")
-
-        # Check if username exists
-        if models.User.query.filter_by(username=username).first():
-            flash("Username already taken.", "danger")
-            return render_template("register.html")
-
-        user = models.User(
-            first_name=first_name, 
-            last_name=last_name,
-            username=username
-        )
-        user.set_password(password)
-
+    nonce = session.pop('oidc_nonce', None)
+    user_info = token.get('userinfo')
+    if not user_info:
         try:
-            db.session.add(user)
+            user_info = google.parse_id_token(token, nonce=nonce)
+        except Exception:
+            app.logger.exception("Google id_token parse failed")
+            flash("Could not verify Google sign-in.", "danger")
+            return redirect(url_for('login'))
+
+    google_sub = user_info.get('sub')
+    email = (user_info.get('email') or '').strip().lower()
+    if not google_sub or not email:
+        flash("Google did not return enough account information.", "danger")
+        return redirect(url_for('login'))
+
+    if not user_info.get('email_verified', True):
+        flash("Please verify your email with Google before signing in.", "danger")
+        return redirect(url_for('login'))
+
+    first_name = (user_info.get('given_name') or email.split('@')[0])[:25]
+    last_name = (user_info.get('family_name') or '')[:50]
+
+    user = models.User.query.filter_by(google_sub=google_sub).first()
+    if user:
+        user.email = email
+        user.first_name = first_name or user.first_name
+        user.last_name = last_name
+    else:
+        user = models.User(
+            google_sub=google_sub,
+            email=email,
+            first_name=first_name or 'User',
+            last_name=last_name,
+            username=None,
+        )
+        db.session.add(user)
+
+    refresh_tok = token.get('refresh_token')
+    if refresh_tok:
+        user.google_refresh_token = refresh_tok
+
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        flash("Account conflict. Try again or contact support.", "danger")
+        return redirect(url_for('login'))
+
+    login_user(user)
+
+    next_path = session.pop('oauth_next', '/') or '/'
+    if not current_user.username:
+        return redirect(url_for('complete_profile'))
+    if next_path.startswith('/'):
+        return redirect(next_path)
+    return redirect(url_for('index'))
+
+
+@app.route('/complete-profile', methods=['GET', 'POST'])
+@login_required
+def complete_profile():
+    if current_user.username:
+        return redirect(url_for('index'))
+
+    if request.method == 'POST':
+        handle = (request.form.get('handle') or '').strip().lstrip('@')
+        first_name = (request.form.get('first_name') or '').strip()[:25]
+        last_name = (request.form.get('last_name') or '').strip()[:50]
+
+        if not first_name:
+            flash("First name is required.", "danger")
+            return render_template('onboarding.html')
+        if not re.match(r'^[a-zA-Z0-9_]{3,30}$', handle):
+            flash("Handle must be 3–30 characters: letters, numbers, and underscores only.", "danger")
+            return render_template('onboarding.html')
+
+        if models.User.query.filter(models.User.username == handle, models.User.id != current_user.id).first():
+            flash("That handle is already taken.", "danger")
+            return render_template('onboarding.html')
+
+        current_user.username = handle
+        current_user.first_name = first_name
+        current_user.last_name = last_name
+        try:
             db.session.commit()
-            flash("Account created successfully.", "success")
-            login_user(user)
-            return redirect("/")
-        except Exception as e:
+            flash("Profile saved.", "success")
+            return redirect(url_for('index'))
+        except IntegrityError:
             db.session.rollback()
-            flash("An error occurred while creating your account.", "danger")
-            return render_template("register.html")
-    
-    return render_template('register.html')
+            db.session.refresh(current_user)
+            flash("That handle is already taken.", "danger")
+
+    return render_template('onboarding.html')
+
+
+@app.route('/register')
+def register():
+    return redirect(url_for('login'))
+
 
 @app.route('/me', methods=['GET', 'POST'])
 @login_required

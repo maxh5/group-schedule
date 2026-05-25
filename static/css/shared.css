@@ -286,13 +286,32 @@ body {
         height: 56px;
     }
 
+    .sidebar {
+        min-height: 0;
+    }
+
     .sidebar-nav {
         flex-direction: column;
         align-items: center;
-        overflow: visible;
-        flex: unset;
+        overflow-x: hidden;
+        overflow-y: auto;
+        flex: 1 1 auto;
+        min-height: 0;
         width: 100%;
         gap: 16px;
+    }
+
+    .sidebar-footer {
+        margin-top: auto;
+        padding-top: 16px;
+        border-top: 1px solid var(--border-color);
+        flex-shrink: 0;
+    }
+
+    .sidebar-dark-mode-toggle {
+        margin-top: 0;
+        padding-top: 0;
+        border-top: none;
     }
 
     /* Right Sidebar (Mirrors Left) */
@@ -826,6 +845,15 @@ h1, h2 {
     margin-bottom: 16px;
 }
 
+/* Bottom of sidebar: calendar settings + theme */
+.sidebar-footer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    width: 100%;
+}
+
 /* Dark Mode Toggle in Sidebar */
 .sidebar-dark-mode-toggle {
     margin-top: auto;
@@ -911,9 +939,211 @@ h1, h2 {
     opacity: 1;
 }
 
-/* Mobile: Hide dark mode toggle */
+/* Mobile: footer row (calendars + theme) */
 @media (max-width: 767px) {
+    .sidebar-footer {
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+        padding-top: 0;
+        border-top: none;
+        margin-top: 0;
+    }
+
     .sidebar-dark-mode-toggle {
         display: none;
     }
+}
+
+/* Calendar settings page */
+.cal-settings {
+    max-width: 640px;
+    margin: 0 auto;
+    flex-shrink: 0;
+    color: var(--text-color);
+}
+
+.cal-settings-account-card {
+    background: var(--card-bg, #fff);
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: 20px 22px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 8px var(--shadow);
+    flex-shrink: 0;
+    min-height: 8rem;
+    color: var(--text-color);
+}
+
+[data-theme="dark"] .cal-settings-account-card {
+    background: var(--card-bg, #1e293b);
+}
+
+.cal-settings-account-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.cal-settings-account-title {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    min-width: 0;
+}
+
+.cal-settings-google-mark {
+    flex-shrink: 0;
+    display: flex;
+    margin-top: 2px;
+}
+
+.cal-settings-provider-name {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.2;
+    color: var(--text-color);
+}
+
+.cal-settings-account-email {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: var(--muted);
+    word-break: break-all;
+}
+
+.cal-settings-account-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.cal-settings-inline-form {
+    margin: 0;
+}
+
+.btn-sm {
+    padding: 6px 14px;
+    font-size: 13px;
+}
+
+.cal-settings-account-body {
+    padding-top: 16px;
+}
+
+.cal-settings-lead {
+    margin: 0 0 14px;
+    font-size: 14px;
+    color: var(--muted);
+    line-height: 1.5;
+}
+
+.cal-settings-subheading {
+    margin: 0 0 10px;
+    font-size: 13px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+}
+
+.cal-settings-cal-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.cal-settings-cal-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.cal-settings-cal-row:last-child {
+    border-bottom: none;
+}
+
+.cal-settings-cal-name {
+    flex: 1;
+    min-width: 0;
+    font-weight: 600;
+    font-size: 15px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.cal-settings-toggle-form {
+    margin: 0;
+    flex-shrink: 0;
+}
+
+.cal-settings-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    margin: 0;
+}
+
+.cal-settings-toggle-text {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+    white-space: nowrap;
+}
+
+.cal-settings-toggle-input {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--active-color, #6366f1);
+    cursor: pointer;
+}
+
+.cal-settings-empty {
+    margin: 0 0 16px;
+    font-size: 14px;
+    color: var(--muted);
+}
+
+.cal-settings-add-block {
+    margin-top: 20px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border-color);
+}
+
+.cal-settings-add-hint {
+    margin: 0 0 10px;
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.45;
+}
+
+.cal-settings-add-hint code {
+    font-size: 12px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: var(--hover-bg);
+}
+
+.cal-settings-add-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+}
+
+.cal-settings-add-input {
+    flex: 1;
+    min-width: 160px;
 }
