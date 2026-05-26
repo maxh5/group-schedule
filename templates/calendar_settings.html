@@ -5,7 +5,7 @@
 {% block content %}
 <div class="page-header">
     <h1 class="page-title">Calendar settings</h1>
-    <p class="page-subtitle">Choose which Google calendars feed your main week view. Sync pulls every calendar Google lists for your account; you can also add one by ID.</p>
+    <p class="page-subtitle">Connect your calendar accounts and choose which calendars appear in your week view.</p>
 </div>
 
 {% with messages = get_flashed_messages(with_categories=true) %}
@@ -17,9 +17,13 @@
 {% endwith %}
 
 <div class="cal-settings">
+
+    {# ---- One card per linked Google account ---- #}
     {% for account in google_accounts %}
     <section class="cal-settings-account-card">
+
         {% if not account.connected %}
+        {# Unconnected placeholder #}
         <div class="cal-settings-account-head">
             <div class="cal-settings-account-title">
                 <span class="cal-settings-google-mark" aria-hidden="true">
@@ -37,22 +41,37 @@
         </div>
 
         {% else %}
+        {# Connected account #}
         <div class="cal-settings-account-head">
             <div class="cal-settings-account-title">
                 <span class="cal-settings-google-mark" aria-hidden="true">
                     <svg width="22" height="22" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
                 </span>
                 <div>
-                    <h2 class="cal-settings-provider-name">Google</h2>
+                    <h2 class="cal-settings-provider-name">Google
+                        {% if account.is_login_account %}
+                        <span class="cal-settings-badge">login account</span>
+                        {% endif %}
+                    </h2>
                     <p class="cal-settings-account-email">{{ account.email }}</p>
                 </div>
             </div>
             <div class="cal-settings-account-actions">
                 <form method="post" class="cal-settings-inline-form">
                     <input type="hidden" name="action" value="sync_google">
+                    <input type="hidden" name="account_id" value="{{ account.id }}">
                     <button type="submit" class="btn btn-primary btn-sm">Sync</button>
                 </form>
+                {% if account.is_login_account %}
                 <a class="btn btn-sm" href="{{ reconnect_url }}">Reconnect</a>
+                {% else %}
+                <form method="post" class="cal-settings-inline-form"
+                      onsubmit="return confirm('Disconnect {{ account.email }}? Its calendars will be removed from your view.');">
+                    <input type="hidden" name="action" value="disconnect_account">
+                    <input type="hidden" name="account_id" value="{{ account.id }}">
+                    <button type="submit" class="btn btn-sm btn-danger">Disconnect</button>
+                </form>
+                {% endif %}
             </div>
         </div>
 
@@ -67,6 +86,7 @@
                     <form method="post" class="cal-settings-toggle-form">
                         <input type="hidden" name="action" value="toggle_calendar">
                         <input type="hidden" name="external_id" value="{{ cal.external_id }}">
+                        <input type="hidden" name="account_id" value="{{ account.id }}">
                         <label class="cal-settings-toggle">
                             <span class="cal-settings-toggle-text">Week view</span>
                             <input type="checkbox" name="included" value="1" class="cal-settings-toggle-input"
@@ -83,16 +103,113 @@
             {% endif %}
 
             <div class="cal-settings-add-block">
-                <p class="cal-settings-add-hint">Add another calendar you can access (calendar email, group address, or <code>primary</code>).</p>
+                <p class="cal-settings-add-hint">Add another calendar you can access with this account (calendar email, group address, or <code>primary</code>).</p>
                 <form method="post" class="cal-settings-add-form">
                     <input type="hidden" name="action" value="add_google_calendar">
+                    <input type="hidden" name="account_id" value="{{ account.id }}">
                     <input type="text" name="calendar_id" class="form-input cal-settings-add-input" placeholder="Calendar ID" autocomplete="off" maxlength="512">
                     <button type="submit" class="btn btn-primary btn-sm">Add</button>
                 </form>
             </div>
         </div>
         {% endif %}
+
     </section>
     {% endfor %}
+
+    {# ---- Add another Google account ---- #}
+    <div class="cal-settings-add-account">
+        <a href="{{ add_account_url }}" class="btn btn-secondary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Add another Google account
+        </a>
+    </div>
+
+    {# ---- One card per linked iCloud account ---- #}
+    {% for account in apple_accounts %}
+    <section class="cal-settings-account-card">
+        <div class="cal-settings-account-head">
+            <div class="cal-settings-account-title">
+                <span class="cal-settings-apple-mark" aria-hidden="true">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M16.365 1.43c0 1.14-.467 2.273-1.236 3.06-.829.852-2.18 1.51-3.39 1.414-.144-1.123.41-2.293 1.158-3.07.83-.864 2.255-1.485 3.468-1.404zM21.34 17.4c-.59 1.346-.875 1.95-1.634 3.146-1.06 1.669-2.554 3.747-4.405 3.763-1.643.013-2.066-1.069-4.296-1.057-2.23.011-2.694 1.078-4.338 1.063-1.85-.017-3.265-1.892-4.325-3.56C.4 16.78-.18 12.272 1.71 9.643c1.339-1.863 3.453-2.953 5.444-2.953 2.025 0 3.298 1.108 4.972 1.108 1.622 0 2.611-1.11 4.952-1.11 1.769 0 3.646.964 4.98 2.629-4.378 2.399-3.666 8.654-.717 8.083z"/></svg>
+                </span>
+                <div>
+                    <h2 class="cal-settings-provider-name">iCloud</h2>
+                    <p class="cal-settings-account-email">{{ account.email }}</p>
+                </div>
+            </div>
+            <div class="cal-settings-account-actions">
+                <form method="post" class="cal-settings-inline-form">
+                    <input type="hidden" name="action" value="sync_apple">
+                    <input type="hidden" name="account_id" value="{{ account.id }}">
+                    <button type="submit" class="btn btn-primary btn-sm">Sync</button>
+                </form>
+                <form method="post" class="cal-settings-inline-form"
+                      onsubmit="return confirm('Disconnect {{ account.email }}? Its calendars will be removed from your view.');">
+                    <input type="hidden" name="action" value="disconnect_account">
+                    <input type="hidden" name="account_id" value="{{ account.id }}">
+                    <button type="submit" class="btn btn-sm btn-danger">Disconnect</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="cal-settings-account-body">
+            <h3 class="cal-settings-subheading">Calendars</h3>
+
+            {% if account.calendars %}
+            <ul class="cal-settings-cal-list">
+                {% for cal in account.calendars %}
+                <li class="cal-settings-cal-row">
+                    <span class="cal-settings-cal-name" title="{{ cal.summary }}">{{ cal.summary }}</span>
+                    <form method="post" class="cal-settings-toggle-form">
+                        <input type="hidden" name="action" value="toggle_calendar">
+                        <input type="hidden" name="external_id" value="{{ cal.external_id }}">
+                        <input type="hidden" name="account_id" value="{{ account.id }}">
+                        <label class="cal-settings-toggle">
+                            <span class="cal-settings-toggle-text">Week view</span>
+                            <input type="checkbox" name="included" value="1" class="cal-settings-toggle-input"
+                                   aria-label="Include on main week view"
+                                   {% if cal.included_in_main_view %}checked{% endif %}
+                                   onchange="this.form.submit()">
+                        </label>
+                    </form>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <p class="cal-settings-empty">No calendars yet. Sync to load them from iCloud.</p>
+            {% endif %}
+        </div>
+    </section>
+    {% endfor %}
+
+    {# ---- Connect an iCloud account (collapsed by default) ---- #}
+    <details class="cal-settings-connect-disclosure">
+        <summary class="cal-settings-connect-trigger">
+            <svg class="cal-settings-connect-trigger-plus" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            <span>Connect iCloud account</span>
+        </summary>
+        <div class="cal-settings-connect-panel">
+            <p class="cal-settings-connect-hint">
+                Need an app-specific password? Generate one at
+                <a href="https://appleid.apple.com" target="_blank" rel="noopener">appleid.apple.com</a>
+                under <strong>Sign-In and Security &rarr; App-Specific Passwords</strong>
+                (requires two-factor authentication on your Apple ID).
+            </p>
+            <form method="post" class="cal-settings-apple-connect-form">
+                <input type="hidden" name="action" value="add_apple_account">
+                <label class="cal-settings-field">
+                    <span class="cal-settings-field-label">Apple ID (email)</span>
+                    <input type="email" name="apple_id" class="form-input" placeholder="you@icloud.com" required autocomplete="username">
+                </label>
+                <label class="cal-settings-field">
+                    <span class="cal-settings-field-label">App-specific password</span>
+                    <input type="password" name="app_password" class="form-input" placeholder="xxxx-xxxx-xxxx-xxxx" required autocomplete="off">
+                </label>
+                <button type="submit" class="btn btn-primary">Connect</button>
+            </form>
+        </div>
+    </details>
+
 </div>
 {% endblock %}

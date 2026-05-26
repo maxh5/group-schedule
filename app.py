@@ -72,6 +72,8 @@ if app.config['GOOGLE_CLIENT_ID'] and app.config['GOOGLE_CLIENT_SECRET']:
 from extras.api import fetch_class_by_section, parse_class_item
 """Google Calendar"""
 from extras import google_calendar as gcal
+"""iCloud Calendar (CalDAV)"""
+from extras import icloud_calendar as icloud
 """Models"""
 import models
 
@@ -143,9 +145,40 @@ def _ensure_calendar_schema():
             if 'google_refresh_token' not in cols:
                 with db.engine.begin() as conn:
                     conn.execute(text('ALTER TABLE users ADD COLUMN google_refresh_token TEXT'))
+
+        # Add oauth_token_id to user_linked_calendars if it doesn't exist yet
+        if 'user_linked_calendars' in tables:
+            cal_cols = {c['name'] for c in inspector.get_columns('user_linked_calendars')}
+            if 'oauth_token_id' not in cal_cols:
+                with db.engine.begin() as conn:
+                    conn.execute(text(
+                        'ALTER TABLE user_linked_calendars '
+                        'ADD COLUMN oauth_token_id INTEGER REFERENCES user_oauth_tokens(id) ON DELETE CASCADE'
+                    ))
+
         db.create_all()
+
+        # Backfill UserOAuthToken from legacy google_refresh_token on User rows
+        users_with_token = models.User.query.filter(
+            models.User.google_refresh_token.isnot(None)
+        ).all()
+        for u in users_with_token:
+            existing = models.UserOAuthToken.query.filter_by(
+                user_id=u.id, provider='google', provider_account_id=u.google_sub
+            ).first()
+            if not existing:
+                db.session.add(models.UserOAuthToken(
+                    user_id=u.id,
+                    provider='google',
+                    provider_account_id=u.google_sub,
+                    email=u.email,
+                    refresh_token=u.google_refresh_token,
+                    is_login_account=True,
+                ))
+        db.session.commit()
     except Exception:
         app.logger.exception('Calendar schema migration failed')
+        db.session.rollback()
     app._calendar_schema_ensured = True
 
 
@@ -157,6 +190,9 @@ def build_week_events_for_users(user_ids, week_start, week_end):
     """
     Merge DB Event rows (class-derived) with Google Calendar events for enabled linked calendars.
     week_end is exclusive (first day after the displayed week).
+
+    Refresh tokens are resolved via UserOAuthToken rows; legacy rows with oauth_token_id=NULL
+    fall back to user.google_refresh_token.
     """
     _ensure_calendar_schema()
     if not user_ids:
@@ -188,55 +224,130 @@ def build_week_events_for_users(user_ids, week_start, week_end):
     t_min, t_max = gcal.week_bounds_rfc3339_utc(week_start, week_end)
 
     for user in users:
-        if not user.google_refresh_token:
-            continue
-        try:
-            access = gcal.refresh_google_access_token(cid, csec, user.google_refresh_token)
-        except Exception:
-            app.logger.warning('Google token refresh failed for user %s', user.id, exc_info=True)
-            continue
+        # Collect (refresh_token, [calendar_external_ids]) pairs, one per linked account
+        token_calendar_pairs = []
 
-        cal_rows = (
-            models.UserLinkedCalendar.query.filter_by(
-                user_id=user.id, provider='google', included_in_main_view=True
+        google_tokens = models.UserOAuthToken.query.filter_by(
+            user_id=user.id, provider='google'
+        ).all()
+
+        for oauth_tok in google_tokens:
+            if not oauth_tok.refresh_token:
+                continue
+            cal_rows = models.UserLinkedCalendar.query.filter_by(
+                user_id=user.id, provider='google',
+                oauth_token_id=oauth_tok.id, included_in_main_view=True
             ).all()
-        )
-        calendar_ids = [r.external_id for r in cal_rows]
-        if not calendar_ids:
+            cal_ids = [r.external_id for r in cal_rows]
+            if cal_ids:
+                token_calendar_pairs.append((oauth_tok.refresh_token, cal_ids))
+
+        # Legacy: calendars with no oauth_token_id → use user.google_refresh_token
+        if user.google_refresh_token:
+            legacy_rows = models.UserLinkedCalendar.query.filter_by(
+                user_id=user.id, provider='google', included_in_main_view=True
+            ).filter(models.UserLinkedCalendar.oauth_token_id.is_(None)).all()
+            legacy_ids = [r.external_id for r in legacy_rows]
+            if legacy_ids:
+                token_calendar_pairs.append((user.google_refresh_token, legacy_ids))
+
+        # If user has no linked calendars at all, fall back to "primary" using login token
+        if not token_calendar_pairs:
             has_any = models.UserLinkedCalendar.query.filter_by(
                 user_id=user.id, provider='google'
             ).first()
             if not has_any:
-                calendar_ids = ['primary']
-            else:
-                continue
+                login_tok = next(
+                    (t for t in google_tokens if t.is_login_account and t.refresh_token),
+                    None,
+                )
+                fallback_token = (
+                    (login_tok.refresh_token if login_tok else None)
+                    or user.google_refresh_token
+                )
+                if fallback_token:
+                    token_calendar_pairs.append((fallback_token, ['primary']))
 
-        for cal_id in calendar_ids:
+        for refresh_token, calendar_ids in token_calendar_pairs:
             try:
-                raw = gcal.events_list_for_calendar(access, cal_id, t_min, t_max)
+                access = gcal.refresh_google_access_token(cid, csec, refresh_token)
             except Exception:
                 app.logger.warning(
-                    'Google events.list failed user=%s calendar=%s', user.id, cal_id, exc_info=True
+                    'Google token refresh failed for user %s', user.id, exc_info=True
                 )
                 continue
-            for slot in gcal.google_events_to_week_slots(raw, week_start, week_end, local_tz):
-                out.append({
-                    'day': slot['day'],
-                    'start': slot['start'],
-                    'end': slot['end'],
-                    'person': user.id,
-                    'title': slot['title'],
-                })
+            for cal_id in calendar_ids:
+                try:
+                    raw = gcal.events_list_for_calendar(access, cal_id, t_min, t_max)
+                except Exception:
+                    app.logger.warning(
+                        'Google events.list failed user=%s calendar=%s', user.id, cal_id,
+                        exc_info=True,
+                    )
+                    continue
+                for slot in gcal.google_events_to_week_slots(raw, week_start, week_end, local_tz):
+                    out.append({
+                        'day': slot['day'],
+                        'start': slot['start'],
+                        'end': slot['end'],
+                        'person': user.id,
+                        'title': slot['title'],
+                    })
+
+        # ---- iCloud (CalDAV) ----
+        apple_tokens = models.UserOAuthToken.query.filter_by(
+            user_id=user.id, provider='apple'
+        ).all()
+        if apple_tokens:
+            apple_t_min, apple_t_max = icloud.week_bounds_utc(week_start, week_end)
+            for oauth_tok in apple_tokens:
+                if not oauth_tok.refresh_token:
+                    continue
+                cal_rows = models.UserLinkedCalendar.query.filter_by(
+                    user_id=user.id, provider='apple',
+                    oauth_token_id=oauth_tok.id, included_in_main_view=True,
+                ).all()
+                if not cal_rows:
+                    continue
+                try:
+                    client = icloud.make_client(oauth_tok.email, oauth_tok.refresh_token)
+                except Exception:
+                    app.logger.warning(
+                        'iCloud client init failed user=%s', user.id, exc_info=True
+                    )
+                    continue
+                for row in cal_rows:
+                    try:
+                        events = icloud.events_list_for_calendar(
+                            client, row.external_id, apple_t_min, apple_t_max
+                        )
+                    except Exception:
+                        app.logger.warning(
+                            'iCloud events fetch failed user=%s calendar=%s',
+                            user.id, row.external_id, exc_info=True,
+                        )
+                        continue
+                    for slot in icloud.icloud_events_to_week_slots(
+                        events, week_start, week_end, local_tz
+                    ):
+                        out.append({
+                            'day': slot['day'],
+                            'start': slot['start'],
+                            'end': slot['end'],
+                            'person': user.id,
+                            'title': slot['title'],
+                        })
     return out
 
 
-def sync_google_calendar_list_rows(user):
-    """Upsert UserLinkedCalendar from Google calendarList (requires valid refresh token)."""
+
+def sync_google_calendar_list_rows(user, oauth_token):
+    """Upsert UserLinkedCalendar from Google calendarList for a given UserOAuthToken."""
     cid = app.config.get('GOOGLE_CLIENT_ID')
     csec = app.config.get('GOOGLE_CLIENT_SECRET')
-    if not cid or not csec or not user.google_refresh_token:
-        return False, 'Google Calendar is not connected. Use “Grant calendar access” below.'
-    access = gcal.refresh_google_access_token(cid, csec, user.google_refresh_token)
+    if not cid or not csec or not oauth_token.refresh_token:
+        return False, 'Google Calendar is not connected. Use "Grant calendar access" below.'
+    access = gcal.refresh_google_access_token(cid, csec, oauth_token.refresh_token)
     items = gcal.fetch_calendar_list(access)
     for item in items:
         eid = item.get('id')
@@ -251,15 +362,59 @@ def sync_google_calendar_list_rows(user):
         if row:
             row.summary = summary
             row.background_color = (bg or '')[:32] if bg else None
+            row.oauth_token_id = oauth_token.id
         else:
             db.session.add(
                 models.UserLinkedCalendar(
                     user_id=user.id,
+                    oauth_token_id=oauth_token.id,
                     provider='google',
                     external_id=eid,
                     summary=summary,
                     background_color=(bg or '')[:32] if bg else None,
                     included_in_main_view=bool(selected),
+                )
+            )
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return False, 'Could not save calendar list (try sync again).'
+    return True, None
+
+
+def sync_apple_calendar_list_rows(user, oauth_token):
+    """Upsert UserLinkedCalendar from iCloud CalDAV for a given UserOAuthToken."""
+    if not oauth_token.refresh_token:
+        return False, 'iCloud is not connected. Reconnect this account.'
+    try:
+        client = icloud.make_client(oauth_token.email, oauth_token.refresh_token)
+        items = icloud.fetch_calendar_list(client)
+    except Exception as e:
+        app.logger.exception('iCloud calendar list fetch failed for user %s', user.id)
+        return False, f'Could not load calendars from iCloud: {e}'
+
+    for item in items:
+        eid = item.get('external_id')
+        if not eid:
+            continue
+        summary = (item.get('summary') or eid)[:512]
+        row = models.UserLinkedCalendar.query.filter_by(
+            user_id=user.id, provider='apple', external_id=eid
+        ).first()
+        if row:
+            row.summary = summary
+            row.oauth_token_id = oauth_token.id
+        else:
+            db.session.add(
+                models.UserLinkedCalendar(
+                    user_id=user.id,
+                    oauth_token_id=oauth_token.id,
+                    provider='apple',
+                    external_id=eid,
+                    summary=summary,
+                    background_color=None,
+                    included_in_main_view=True,
                 )
             )
     try:
@@ -276,7 +431,7 @@ def load_user(user_id):
 
 
 _ONBOARDING_ALLOWED_ENDPOINTS = frozenset({
-    'google_login', 'google_callback', 'complete_profile', 'logout', 'static',
+    'google_login', 'google_callback', 'add_google_account', 'complete_profile', 'logout', 'static',
 })
 
 
@@ -371,12 +526,38 @@ def calendar_settings():
 
     if request.method == 'POST':
         action = request.form.get('action') or ''
+        account_id = request.form.get('account_id') or ''
+
         if action == 'sync_google':
-            ok, err = sync_google_calendar_list_rows(current_user)
-            if ok:
-                flash('Calendars synced from Google.', 'success')
+            oauth_tok = None
+            if account_id:
+                oauth_tok = models.UserOAuthToken.query.filter_by(
+                    id=account_id, user_id=current_user.id, provider='google'
+                ).first()
+            if not oauth_tok:
+                # Fall back to the login account token
+                oauth_tok = models.UserOAuthToken.query.filter_by(
+                    user_id=current_user.id, provider='google', is_login_account=True
+                ).first()
+            if not oauth_tok and current_user.google_refresh_token:
+                # Last-resort legacy path
+                oauth_tok = models.UserOAuthToken(
+                    user_id=current_user.id,
+                    provider='google',
+                    provider_account_id=current_user.google_sub,
+                    email=current_user.email,
+                    refresh_token=current_user.google_refresh_token,
+                    is_login_account=True,
+                )
+            if oauth_tok:
+                ok, err = sync_google_calendar_list_rows(current_user, oauth_tok)
+                if ok:
+                    flash('Calendars synced from Google.', 'success')
+                else:
+                    flash(err or 'Could not sync calendars.', 'danger')
             else:
-                flash(err or 'Could not sync calendars.', 'danger')
+                flash('Google Calendar is not connected.', 'danger')
+
         elif action == 'toggle_calendar':
             eid = request.form.get('external_id') or ''
             on = request.form.get('included') == '1'
@@ -386,74 +567,198 @@ def calendar_settings():
             if row:
                 row.included_in_main_view = on
                 db.session.commit()
+
         elif action == 'add_google_calendar':
             raw = (request.form.get('calendar_id') or '').strip()
             if not raw:
                 flash('Enter a calendar ID.', 'danger')
-            elif not current_user.google_refresh_token:
-                flash('Connect Google first.', 'danger')
             else:
-                cid_cfg = app.config.get('GOOGLE_CLIENT_ID')
-                csec = app.config.get('GOOGLE_CLIENT_SECRET')
-                try:
-                    access = gcal.refresh_google_access_token(
-                        cid_cfg, csec, current_user.google_refresh_token
-                    )
-                    meta = gcal.fetch_calendar_metadata(access, raw)
-                    if not meta:
-                        flash('Calendar not found or this account does not have access.', 'danger')
-                    else:
-                        eid = meta.get('id') or raw
-                        summary = (meta.get('summary') or eid)[:512]
-                        existing = models.UserLinkedCalendar.query.filter_by(
-                            user_id=current_user.id, provider='google', external_id=eid
-                        ).first()
-                        if existing:
-                            flash('That calendar is already in your list.', 'info')
+                # Resolve which token to use for validating the calendar
+                oauth_tok = None
+                if account_id:
+                    oauth_tok = models.UserOAuthToken.query.filter_by(
+                        id=account_id, user_id=current_user.id, provider='google'
+                    ).first()
+                if not oauth_tok:
+                    oauth_tok = models.UserOAuthToken.query.filter_by(
+                        user_id=current_user.id, provider='google', is_login_account=True
+                    ).first()
+                refresh = (
+                    oauth_tok.refresh_token if oauth_tok else current_user.google_refresh_token
+                )
+                if not refresh:
+                    flash('Connect Google first.', 'danger')
+                else:
+                    cid_cfg = app.config.get('GOOGLE_CLIENT_ID')
+                    csec = app.config.get('GOOGLE_CLIENT_SECRET')
+                    try:
+                        access = gcal.refresh_google_access_token(cid_cfg, csec, refresh)
+                        meta = gcal.fetch_calendar_metadata(access, raw)
+                        if not meta:
+                            flash('Calendar not found or this account does not have access.', 'danger')
                         else:
-                            db.session.add(
-                                models.UserLinkedCalendar(
-                                    user_id=current_user.id,
-                                    provider='google',
-                                    external_id=eid,
-                                    summary=summary,
-                                    background_color=None,
-                                    included_in_main_view=True,
+                            eid = meta.get('id') or raw
+                            summary = (meta.get('summary') or eid)[:512]
+                            existing = models.UserLinkedCalendar.query.filter_by(
+                                user_id=current_user.id, provider='google', external_id=eid
+                            ).first()
+                            if existing:
+                                flash('That calendar is already in your list.', 'info')
+                            else:
+                                db.session.add(
+                                    models.UserLinkedCalendar(
+                                        user_id=current_user.id,
+                                        oauth_token_id=oauth_tok.id if oauth_tok else None,
+                                        provider='google',
+                                        external_id=eid,
+                                        summary=summary,
+                                        background_color=None,
+                                        included_in_main_view=True,
+                                    )
                                 )
+                                db.session.commit()
+                                flash('Calendar added.', 'success')
+                    except Exception:
+                        app.logger.exception('add_google_calendar failed')
+                        flash('Could not add calendar. Check the ID and try again.', 'danger')
+
+        elif action == 'add_apple_account':
+            apple_id = (request.form.get('apple_id') or '').strip().lower()
+            app_password = (request.form.get('app_password') or '').strip()
+            if not apple_id or not app_password:
+                flash('Enter both your Apple ID and an app-specific password.', 'danger')
+            else:
+                ok, err = icloud.validate_credentials(apple_id, app_password)
+                if not ok:
+                    flash(err or 'Could not connect to iCloud.', 'danger')
+                else:
+                    existing = models.UserOAuthToken.query.filter_by(
+                        user_id=current_user.id, provider='apple',
+                        provider_account_id=apple_id,
+                    ).first()
+                    if existing:
+                        existing.refresh_token = app_password
+                        existing.email = apple_id
+                        tok = existing
+                    else:
+                        tok = models.UserOAuthToken(
+                            user_id=current_user.id,
+                            provider='apple',
+                            provider_account_id=apple_id,
+                            email=apple_id,
+                            refresh_token=app_password,
+                            is_login_account=False,
+                        )
+                        db.session.add(tok)
+                    try:
+                        db.session.commit()
+                    except IntegrityError:
+                        db.session.rollback()
+                        flash('Could not save iCloud credentials.', 'danger')
+                    else:
+                        sync_ok, sync_err = sync_apple_calendar_list_rows(current_user, tok)
+                        if sync_ok:
+                            flash(f'iCloud account {apple_id} connected.', 'success')
+                        else:
+                            flash(
+                                f'iCloud connected, but calendar sync failed: {sync_err}',
+                                'warning',
                             )
-                            db.session.commit()
-                            flash('Calendar added.', 'success')
-                except Exception:
-                    app.logger.exception('add_google_calendar failed')
-                    flash('Could not add calendar. Check the ID and try again.', 'danger')
+
+        elif action == 'sync_apple':
+            oauth_tok = None
+            if account_id:
+                oauth_tok = models.UserOAuthToken.query.filter_by(
+                    id=account_id, user_id=current_user.id, provider='apple'
+                ).first()
+            if not oauth_tok:
+                flash('iCloud account not found.', 'danger')
+            else:
+                ok, err = sync_apple_calendar_list_rows(current_user, oauth_tok)
+                if ok:
+                    flash('Calendars synced from iCloud.', 'success')
+                else:
+                    flash(err or 'Could not sync iCloud calendars.', 'danger')
+
+        elif action == 'disconnect_account':
+            if account_id:
+                tok = models.UserOAuthToken.query.filter_by(
+                    id=account_id, user_id=current_user.id,
+                ).first()
+                if tok:
+                    if tok.is_login_account:
+                        flash('Cannot disconnect the account used to log in.', 'danger')
+                    else:
+                        db.session.delete(tok)
+                        db.session.commit()
+                        flash('Account disconnected.', 'success')
+
         return redirect(url_for('calendar_settings'))
 
-    rows = (
-        models.UserLinkedCalendar.query.filter_by(user_id=current_user.id, provider='google')
-        .order_by(models.UserLinkedCalendar.summary)
+    # ---- GET ----
+    google_tokens = (
+        models.UserOAuthToken.query.filter_by(user_id=current_user.id, provider='google')
+        .order_by(models.UserOAuthToken.is_login_account.desc(), models.UserOAuthToken.email)
         .all()
     )
-    has_token = bool(current_user.google_refresh_token)
-    # Always pass exactly one "slot" so the template never hits an empty for-loop
-    # (which would render a blank main area when connected but google_accounts was empty).
-    google_accounts = [
-        {
-            'connected': has_token,
-            'email': current_user.email,
-            'calendars': rows if has_token else [],
-        }
-    ]
+
+    google_accounts = []
+    for tok in google_tokens:
+        cals = (
+            models.UserLinkedCalendar.query
+            .filter_by(user_id=current_user.id, provider='google', oauth_token_id=tok.id)
+            .order_by(models.UserLinkedCalendar.summary)
+            .all()
+        )
+        google_accounts.append({
+            'id': tok.id,
+            'connected': bool(tok.refresh_token),
+            'email': tok.email,
+            'is_login_account': tok.is_login_account,
+            'calendars': cals,
+        })
+
+    # Show an unconnected placeholder if no tokens exist yet
+    if not google_accounts:
+        google_accounts = [{'id': None, 'connected': False, 'email': None,
+                            'is_login_account': True, 'calendars': []}]
+
+    apple_tokens = (
+        models.UserOAuthToken.query.filter_by(user_id=current_user.id, provider='apple')
+        .order_by(models.UserOAuthToken.email)
+        .all()
+    )
+    apple_accounts = []
+    for tok in apple_tokens:
+        cals = (
+            models.UserLinkedCalendar.query
+            .filter_by(user_id=current_user.id, provider='apple', oauth_token_id=tok.id)
+            .order_by(models.UserLinkedCalendar.summary)
+            .all()
+        )
+        apple_accounts.append({
+            'id': tok.id,
+            'connected': bool(tok.refresh_token),
+            'email': tok.email,
+            'is_login_account': False,
+            'calendars': cals,
+        })
+
     reconnect_url = url_for(
         'google_login',
         next=url_for('calendar_settings'),
         reconsent='1',
     )
+    add_account_url = url_for('add_google_account')
     return render_template(
         'calendar_settings.html',
         google_accounts=google_accounts,
+        apple_accounts=apple_accounts,
         reconnect_url=reconnect_url,
+        add_account_url=add_account_url,
         active_page='calendar_settings',
     )
+
 
 
 @app.route('/classes', methods=['GET', 'POST'])
@@ -1117,6 +1422,27 @@ def google_login():
     return google.authorize_redirect(**oauth_kwargs)
 
 
+@app.route('/auth/google/add-account')
+@login_required
+def add_google_account():
+    """Start an OAuth flow to link an additional Google account (calendar access only)."""
+    if not _google_oauth_configured():
+        flash("Google OAuth is not configured.", "danger")
+        return redirect(url_for('calendar_settings'))
+    google = oauth.create_client('google')
+    redirect_uri = os.environ.get('GOOGLE_OAUTH_REDIRECT_URI') or url_for('google_callback', _external=True)
+    session_nonce = secrets.token_urlsafe(16)
+    session['oidc_nonce'] = session_nonce
+    session['oauth_mode'] = 'add_account'
+    return google.authorize_redirect(
+        redirect_uri=redirect_uri,
+        nonce=session_nonce,
+        code_challenge_method='S256',
+        access_type='offline',
+        prompt='select_account consent',
+    )
+
+
 @app.route('/auth/google/callback')
 def google_callback():
     if not _google_oauth_configured():
@@ -1131,6 +1457,8 @@ def google_callback():
         return redirect(url_for('login'))
 
     nonce = session.pop('oidc_nonce', None)
+    oauth_mode = session.pop('oauth_mode', 'login')
+
     user_info = token.get('userinfo')
     if not user_info:
         try:
@@ -1150,6 +1478,37 @@ def google_callback():
         flash("Please verify your email with Google before signing in.", "danger")
         return redirect(url_for('login'))
 
+    # ---- add-account flow: link a new calendar account to the logged-in user ----
+    if oauth_mode == 'add_account':
+        if not current_user.is_authenticated:
+            flash("You must be logged in to add a calendar account.", "danger")
+            return redirect(url_for('login'))
+        refresh_tok = token.get('refresh_token')
+        existing = models.UserOAuthToken.query.filter_by(
+            user_id=current_user.id, provider='google', provider_account_id=google_sub
+        ).first()
+        if existing:
+            if refresh_tok:
+                existing.refresh_token = refresh_tok
+            existing.email = email
+        else:
+            db.session.add(models.UserOAuthToken(
+                user_id=current_user.id,
+                provider='google',
+                provider_account_id=google_sub,
+                email=email,
+                refresh_token=refresh_tok,
+                is_login_account=False,
+            ))
+        try:
+            db.session.commit()
+            flash(f"Google account {email} connected.", "success")
+        except IntegrityError:
+            db.session.rollback()
+            flash("Could not link that account. It may already be connected.", "danger")
+        return redirect(url_for('calendar_settings'))
+
+    # ---- normal login flow ----
     first_name = (user_info.get('given_name') or email.split('@')[0])[:25]
     last_name = (user_info.get('family_name') or '')[:50]
 
@@ -1171,6 +1530,32 @@ def google_callback():
     refresh_tok = token.get('refresh_token')
     if refresh_tok:
         user.google_refresh_token = refresh_tok
+
+    try:
+        db.session.flush()
+    except IntegrityError:
+        db.session.rollback()
+        flash("Account conflict. Try again or contact support.", "danger")
+        return redirect(url_for('login'))
+
+    # Keep UserOAuthToken in sync with the login account
+    login_token = models.UserOAuthToken.query.filter_by(
+        user_id=user.id, provider='google', provider_account_id=google_sub
+    ).first()
+    if login_token:
+        if refresh_tok:
+            login_token.refresh_token = refresh_tok
+        login_token.email = email
+        login_token.is_login_account = True
+    elif refresh_tok:
+        db.session.add(models.UserOAuthToken(
+            user_id=user.id,
+            provider='google',
+            provider_account_id=google_sub,
+            email=email,
+            refresh_token=refresh_tok,
+            is_login_account=True,
+        ))
 
     try:
         db.session.commit()

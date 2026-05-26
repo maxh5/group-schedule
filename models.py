@@ -17,7 +17,7 @@ class User(db.Model, UserMixin):
 
     google_sub = db.Column(db.String(255), unique=True, nullable=False, index=True)
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
-    # OAuth offline access for Google Calendar API (nullable until consent grants refresh_token)
+    # Legacy fallback — canonical tokens live in UserOAuthToken
     google_refresh_token = db.Column(db.Text, nullable=True)
 
     # Relationships:
@@ -26,6 +26,11 @@ class User(db.Model, UserMixin):
     )
     linked_calendars = db.relationship(
         "UserLinkedCalendar",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    oauth_tokens = db.relationship(
+        "UserOAuthToken",
         back_populates="user",
         cascade="all, delete-orphan",
     )
@@ -86,14 +91,54 @@ class GroupMember(db.Model):
     __table_args__ = (UniqueConstraint("group_id", "user_id", name="uq_group_member"),)
 
 
+class UserOAuthToken(db.Model):
+    """Per-provider credentials for a user. One row per connected account.
+
+    Despite the table/column names, this holds whatever long-lived credential
+    the provider uses:
+      - Google: an OAuth offline refresh_token.
+      - Apple/iCloud: a CalDAV app-specific password (Apple does not offer OAuth
+        for calendar API access). provider_account_id is the Apple ID email.
+      - Microsoft: an OAuth refresh_token (planned).
+    """
+
+    __tablename__ = "user_oauth_tokens"
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", "provider_account_id", name="uq_user_provider_account"),
+    )
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    # 'google' | 'apple' | 'microsoft'
+    provider = db.Column(db.String(32), nullable=False)
+    # Stable unique ID for this account: Google sub, Microsoft oid, or Apple ID email
+    provider_account_id = db.Column(db.String(255), nullable=False)
+    email = db.Column(db.String(255), nullable=False)
+    # OAuth refresh_token OR (for Apple) the CalDAV app-specific password
+    refresh_token = db.Column(db.Text, nullable=True)
+    # True for the account the user logged in with (the identity account)
+    is_login_account = db.Column(db.Boolean, nullable=False, default=False)
+
+    user = db.relationship("User", back_populates="oauth_tokens")
+    linked_calendars = db.relationship(
+        "UserLinkedCalendar",
+        back_populates="oauth_token",
+        cascade="all, delete-orphan",
+    )
+
+
 class UserLinkedCalendar(db.Model):
-    """Per-user calendar source (Google calendarList id) and main-view visibility."""
+    """Per-user calendar source and main-view visibility. Scoped to a UserOAuthToken."""
 
     __tablename__ = "user_linked_calendars"
     __table_args__ = (UniqueConstraint("user_id", "provider", "external_id", name="uq_user_provider_cal"),)
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    # Nullable for legacy rows created before UserOAuthToken; those fall back to user.google_refresh_token
+    oauth_token_id = db.Column(
+        db.Integer, db.ForeignKey("user_oauth_tokens.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     provider = db.Column(db.String(32), nullable=False, default="google")
     external_id = db.Column(db.String(512), nullable=False)
     summary = db.Column(db.String(512), nullable=False, default="")
@@ -101,6 +146,7 @@ class UserLinkedCalendar(db.Model):
     included_in_main_view = db.Column(db.Boolean, nullable=False, default=True)
 
     user = db.relationship("User", back_populates="linked_calendars")
+    oauth_token = db.relationship("UserOAuthToken", back_populates="linked_calendars")
 
 
 class Course(db.Model):

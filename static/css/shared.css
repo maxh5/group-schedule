@@ -1147,3 +1147,163 @@ h1, h2 {
     flex: 1;
     min-width: 160px;
 }
+
+/* "login account" badge on Google account card header */
+.cal-settings-badge {
+    display: inline-block;
+    margin-left: 8px;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-size: 11px;
+    font-weight: 500;
+    background: var(--border, #e2e8f0);
+    color: var(--muted, #64748b);
+    vertical-align: middle;
+    text-transform: lowercase;
+}
+
+/* "Add another Google account" section below the account cards */
+.cal-settings-add-account {
+    margin-top: 16px;
+    padding: 20px 0 0;
+    border-top: 1px solid var(--border, #e2e8f0);
+}
+
+/* Secondary (outline) button variant */
+.btn-secondary {
+    background: transparent;
+    color: var(--text, #0f172a);
+    border: 1.5px solid var(--border, #cbd5e1);
+    gap: 6px;
+}
+.btn-secondary:hover {
+    background: var(--border, #f1f5f9);
+}
+[data-theme="dark"] .btn-secondary {
+    color: var(--text, #f1f5f9);
+    border-color: var(--border, #334155);
+}
+[data-theme="dark"] .btn-secondary:hover {
+    background: var(--border, #1e293b);
+}
+
+/* Apple/iCloud logo mark */
+.cal-settings-apple-mark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    color: #1d1d1f;
+}
+[data-theme="dark"] .cal-settings-apple-mark {
+    color: #f5f5f7;
+}
+
+/* iCloud connect form layout */
+.cal-settings-apple-connect-form {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: flex-end;
+    margin-top: 12px;
+}
+
+.cal-settings-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1 1 200px;
+    min-width: 180px;
+}
+
+.cal-settings-field-label {
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted, #64748b);
+}
+
+/* Collapsible "Connect iCloud account" disclosure (mirrors the Google add-account button) */
+.cal-settings-connect-disclosure {
+    margin-top: 8px;
+}
+
+.cal-settings-connect-trigger {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: 1.5px solid var(--border, #cbd5e1);
+    background: transparent;
+    color: var(--text, #0f172a);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    list-style: none;
+    user-select: none;
+}
+.cal-settings-connect-trigger::-webkit-details-marker {
+    display: none;
+}
+.cal-settings-connect-trigger::marker {
+    content: '';
+}
+.cal-settings-connect-trigger:hover {
+    background: var(--border, #f1f5f9);
+}
+[data-theme="dark"] .cal-settings-connect-trigger {
+    color: var(--text, #f1f5f9);
+    border-color: var(--border, #334155);
+}
+[data-theme="dark"] .cal-settings-connect-trigger:hover {
+    background: var(--border, #1e293b);
+}
+
+/* Plus icon rotates to an "x" cue when expanded */
+.cal-settings-connect-disclosure[open] .cal-settings-connect-trigger-plus {
+    transform: rotate(45deg);
+    transition: transform 0.2s;
+}
+.cal-settings-connect-trigger-plus {
+    transition: transform 0.2s;
+}
+
+/* Expanded panel below the trigger */
+.cal-settings-connect-panel {
+    margin-top: 12px;
+    padding: 16px;
+    border: 1px solid var(--border, #e2e8f0);
+    border-radius: 12px;
+    background: var(--card-bg, #fff);
+}
+[data-theme="dark"] .cal-settings-connect-panel {
+    background: var(--card-bg, #0f172a);
+    border-color: var(--border, #1e293b);
+}
+
+.cal-settings-connect-hint {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--muted, #64748b);
+}
+
+/* Danger (destructive) button variant */
+.btn-danger {
+    background: transparent;
+    color: #dc2626;
+    border: 1.5px solid #fca5a5;
+}
+.btn-danger:hover {
+    background: #fef2f2;
+    border-color: #dc2626;
+}
+[data-theme="dark"] .btn-danger {
+    color: #f87171;
+    border-color: #7f1d1d;
+}
+[data-theme="dark"] .btn-danger:hover {
+    background: #1c0a0a;
+}

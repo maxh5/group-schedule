@@ -1,11 +1,7 @@
 # group-schedule
 
-## FEATURE IDEAS:
-- Find people in the same classes/sections
-- Add custom events
-- Current time view
+## MISC NOTES:
 
-## LATER:
 - inconsistent borders around day columns dark/light mode
 - stop public caching
 - Add to me.html
@@ -21,11 +17,11 @@
 - remove migrations/excess code
 - password and name requirements
 - front page
-- Custom colors
-### TEST
-- Weird splashes that come late
-- make light mode calendar view better
 
+Custom colors
+
+Weird splashes that come late
+
+- make light mode calendar view better
 - add manual class add, fix bug when non-numeric characters are written
 
-CURRENT: CONTINUE TO FIX MOBILE CALENDAR VIEW
