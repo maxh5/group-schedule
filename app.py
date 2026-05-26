@@ -155,6 +155,12 @@ def _ensure_calendar_schema():
                         'ALTER TABLE user_linked_calendars '
                         'ADD COLUMN oauth_token_id INTEGER REFERENCES user_oauth_tokens(id) ON DELETE CASCADE'
                     ))
+            if 'hide_event_titles' not in cal_cols:
+                with db.engine.begin() as conn:
+                    conn.execute(text(
+                        'ALTER TABLE user_linked_calendars '
+                        'ADD COLUMN hide_event_titles BOOLEAN NOT NULL DEFAULT 0'
+                    ))
 
         db.create_all()
 
@@ -186,7 +192,7 @@ def _local_tzinfo():
     return datetime.now().astimezone().tzinfo
 
 
-def build_week_events_for_users(user_ids, week_start, week_end):
+def build_week_events_for_users(user_ids, week_start, week_end, viewer_id=None):
     """
     Merge DB Event rows (class-derived) with Google Calendar events for enabled linked calendars.
     week_end is exclusive (first day after the displayed week).
@@ -238,18 +244,18 @@ def build_week_events_for_users(user_ids, week_start, week_end):
                 user_id=user.id, provider='google',
                 oauth_token_id=oauth_tok.id, included_in_main_view=True
             ).all()
-            cal_ids = [r.external_id for r in cal_rows]
-            if cal_ids:
-                token_calendar_pairs.append((oauth_tok.refresh_token, cal_ids))
+            cal_entries = [(r.external_id, bool(r.hide_event_titles)) for r in cal_rows]
+            if cal_entries:
+                token_calendar_pairs.append((oauth_tok.refresh_token, cal_entries))
 
         # Legacy: calendars with no oauth_token_id → use user.google_refresh_token
         if user.google_refresh_token:
             legacy_rows = models.UserLinkedCalendar.query.filter_by(
                 user_id=user.id, provider='google', included_in_main_view=True
             ).filter(models.UserLinkedCalendar.oauth_token_id.is_(None)).all()
-            legacy_ids = [r.external_id for r in legacy_rows]
-            if legacy_ids:
-                token_calendar_pairs.append((user.google_refresh_token, legacy_ids))
+            legacy_entries = [(r.external_id, bool(r.hide_event_titles)) for r in legacy_rows]
+            if legacy_entries:
+                token_calendar_pairs.append((user.google_refresh_token, legacy_entries))
 
         # If user has no linked calendars at all, fall back to "primary" using login token
         if not token_calendar_pairs:
@@ -266,9 +272,9 @@ def build_week_events_for_users(user_ids, week_start, week_end):
                     or user.google_refresh_token
                 )
                 if fallback_token:
-                    token_calendar_pairs.append((fallback_token, ['primary']))
+                    token_calendar_pairs.append((fallback_token, [('primary', False)]))
 
-        for refresh_token, calendar_ids in token_calendar_pairs:
+        for refresh_token, cal_entries in token_calendar_pairs:
             try:
                 access = gcal.refresh_google_access_token(cid, csec, refresh_token)
             except Exception:
@@ -276,7 +282,7 @@ def build_week_events_for_users(user_ids, week_start, week_end):
                     'Google token refresh failed for user %s', user.id, exc_info=True
                 )
                 continue
-            for cal_id in calendar_ids:
+            for cal_id, hide_titles in cal_entries:
                 try:
                     raw = gcal.events_list_for_calendar(access, cal_id, t_min, t_max)
                 except Exception:
@@ -285,13 +291,14 @@ def build_week_events_for_users(user_ids, week_start, week_end):
                         exc_info=True,
                     )
                     continue
+                redact = hide_titles and user.id != viewer_id
                 for slot in gcal.google_events_to_week_slots(raw, week_start, week_end, local_tz):
                     out.append({
                         'day': slot['day'],
                         'start': slot['start'],
                         'end': slot['end'],
                         'person': user.id,
-                        'title': slot['title'],
+                        'title': 'Busy' if redact else slot['title'],
                     })
 
         # ---- iCloud (CalDAV) ----
@@ -327,6 +334,7 @@ def build_week_events_for_users(user_ids, week_start, week_end):
                             user.id, row.external_id, exc_info=True,
                         )
                         continue
+                    redact = bool(row.hide_event_titles) and user.id != viewer_id
                     for slot in icloud.icloud_events_to_week_slots(
                         events, week_start, week_end, local_tz
                     ):
@@ -335,7 +343,7 @@ def build_week_events_for_users(user_ids, week_start, week_end):
                             'start': slot['start'],
                             'end': slot['end'],
                             'person': user.id,
-                            'title': slot['title'],
+                            'title': 'Busy' if redact else slot['title'],
                         })
     return out
 
@@ -473,7 +481,9 @@ def index():
     start_of_week = today - timedelta(days=today.weekday())
     end_of_week = start_of_week + timedelta(days=7)
 
-    events_data = build_week_events_for_users(all_related_user_ids, start_of_week, end_of_week)
+    events_data = build_week_events_for_users(
+        all_related_user_ids, start_of_week, end_of_week, viewer_id=current_user.id
+    )
 
     return render_template(
         'calendar.html',
@@ -511,7 +521,9 @@ def get_events():
     # Get all related user IDs using helper function
     all_related_user_ids, _, _ = get_related_user_ids(current_user.id)
     
-    events_data = build_week_events_for_users(all_related_user_ids, week_start, week_end)
+    events_data = build_week_events_for_users(
+        all_related_user_ids, week_start, week_end, viewer_id=current_user.id
+    )
     
     return jsonify({"events": events_data})
 
@@ -559,14 +571,19 @@ def calendar_settings():
                 flash('Google Calendar is not connected.', 'danger')
 
         elif action == 'toggle_calendar':
-            eid = request.form.get('external_id') or ''
-            on = request.form.get('included') == '1'
+            row_id = request.form.get('row_id') or ''
+            field = request.form.get('field') or ''
+            on = request.form.get('value') == '1'
             row = models.UserLinkedCalendar.query.filter_by(
-                user_id=current_user.id, provider='google', external_id=eid
+                id=row_id, user_id=current_user.id,
             ).first()
             if row:
-                row.included_in_main_view = on
-                db.session.commit()
+                if field == 'included':
+                    row.included_in_main_view = on
+                    db.session.commit()
+                elif field == 'hide_titles':
+                    row.hide_event_titles = on
+                    db.session.commit()
 
         elif action == 'add_google_calendar':
             raw = (request.form.get('calendar_id') or '').strip()

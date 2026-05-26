@@ -213,39 +213,88 @@ body {
 }
 
 @media (max-width: 767px) {
-    .layout-wrapper {
+    /* Lock the document to the visible viewport on pages that opt into
+       no-scroll (the weekly view) so the user cannot drag-scroll the page
+       below the layout (the gap that opens between 100vh and 100dvh when a
+       mobile browser's URL bar is showing). Other pages stay scrollable. */
+    html:has(.main-content.no-scroll),
+    html:has(.main-content.no-scroll) body {
+        height: 100vh;
+        height: 100dvh;
+        min-height: 0;
+        overflow: hidden;
+        overscroll-behavior: none;
+    }
+
+    .layout-wrapper:has(.main-content.no-scroll) {
         height: 100vh;
         height: 100dvh; /* Dynamic viewport height - accounts for mobile browser chrome */
         min-height: 0; /* Override min-height: 100vh so it doesn't grow past screen */
+        overflow: hidden;
     }
 
     .main-content {
         min-height: 0; /* Allow shrinking within flex */
     }
-    
-    /* Ensure navbar icons are properly visible on mobile */
+
     .sidebar {
-        padding: 8px 12px;
-        gap: 12px;
+        padding: 8px 10px;
+        gap: 8px;
         flex-shrink: 0;
     }
-    
+
+    /* Hide text labels on mobile — icons only, so the full nav fits without scrolling */
+    .sidebar .label {
+        display: none;
+    }
+
+    /* "Coming soon" placeholder hidden on mobile to keep the bar uncluttered */
+    .nav-item.placeholder {
+        display: none;
+    }
+
+    /* Spread the icons evenly across the available horizontal space */
+    .sidebar-nav {
+        overflow-x: visible;
+        overflow-y: visible;
+        justify-content: space-around;
+        gap: 2px;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+    }
+    .sidebar-nav::-webkit-scrollbar { display: none; }
+
     .nav-item {
-        padding: 6px 10px;
-        gap: 6px;
+        padding: 8px;
+        gap: 0;
         font-size: 13px;
-        flex-shrink: 0; /* Prevent items from shrinking */
+        flex-shrink: 0;
+        justify-content: center;
+        border-radius: 10px;
+        min-width: 40px;
+        min-height: 40px;
     }
-    
+
+    /* On mobile the active state is a filled pill — drop the desktop left border */
+    .nav-item.active {
+        border-left: none;
+        padding: 8px;
+    }
+
     .nav-item .icon svg {
-        width: 20px;
-        height: 20px;
+        width: 22px;
+        height: 22px;
         flex-shrink: 0;
     }
-    
+
+    .nav-item.calendar-primary .icon svg {
+        width: 24px;
+        height: 24px;
+    }
+
     .user-avatar {
-        width: 42px;
-        height: 42px;
+        width: 40px;
+        height: 40px;
         flex-shrink: 0;
     }
 }
@@ -369,46 +418,92 @@ body {
     color: var(--muted);
 }
 
+/* Settings sheet backdrop (mobile only) — hidden by default */
+.settings-sheet-backdrop {
+    display: none;
+}
+
 @media (max-width: 767px) {
+    /* Slide-up sheet replaces the old fixed bottom bar */
     .right-sidebar {
          background: var(--sidebar-bg);
-         padding: 10px 16px;
+         padding: 14px 16px 22px;
          display: flex;
          align-items: stretch;
          justify-content: flex-start;
-         gap: 16px;
-         box-shadow: 0 -1px 3px var(--shadow);
-         position: fixed; 
+         gap: 14px;
+         box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.18);
+         position: fixed;
          bottom: 0;
          left: 0;
          right: 0;
          width: 100%;
-         z-index: 100;
+         z-index: 110;
          flex-direction: column;
          border-top: 1px solid var(--border-color);
-         border-radius: 24px 24px 0 0;
+         border-radius: 22px 22px 0 0;
          box-sizing: border-box;
          margin: 0;
-         max-height: 40vh;
+         max-height: 75vh;
          overflow-y: auto;
+         transform: translateY(100%);
+         transition: transform 0.25s ease-out;
+         padding-top: 22px;
     }
-    
-    /* Make sections stack and take less space on mobile */
+
+    .right-sidebar::before {
+        content: '';
+        position: absolute;
+        top: 8px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 40px;
+        height: 4px;
+        border-radius: 2px;
+        background: var(--border-color);
+    }
+
+    .right-sidebar.open {
+        transform: translateY(0);
+    }
+
+    .settings-sheet-backdrop {
+        display: block;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.35);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s ease-out;
+        z-index: 105;
+    }
+
+    .settings-sheet-backdrop.open {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    /* Inside the sheet, stack sections vertically with dividers */
     .right-sidebar .sidebar-section {
-        flex-direction: row;
-        flex-wrap: wrap;
-        justify-content: center;
-        gap: 8px;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 12px;
         flex: 0 0 auto;
+        width: 100%;
     }
-    
+
     .right-sidebar .sidebar-header-text {
+        display: block;
         width: 100%;
         margin-bottom: 4px;
+        text-align: left;
     }
-    
+
     .right-sidebar .divider-h {
-        display: none;
+        display: block;
+        width: 100%;
+        height: 1px;
+        margin: 4px 0;
     }
 }
 
@@ -553,50 +648,56 @@ body {
     line-height: 0;
 }
 
-/* Mobile overrides for Right Sidebar Content */
+/* Mobile overrides for Right Sidebar Content (now a slide-up sheet) */
 @media (max-width: 767px) {
-    .sidebar-section {
-        flex-direction: row;
-        width: auto;
-        gap: 16px;
-    }
-    .sidebar-header-text { display: none; } /* Hide group titles on mobile to save space */
+    /* Default sections (e.g. anywhere outside the sheet) stay as row layouts */
     .sidebar-btn { width: 40px; height: 40px; }
-    .control-group { gap: 8px; }
-    .header-top { display: none !important; } 
-    
-    .divider-h {
-        width: 1px;
-        height: 24px;
-        margin: 0 4px;
+    .control-group { gap: 10px; justify-content: flex-start; }
+
+    /* Within the sheet, lay out things in rows for compactness */
+    .right-sidebar .control-group {
+        justify-content: flex-start;
     }
-    
-    .toggle-switch.vertical {
+
+    .right-sidebar .toggle-switch.vertical {
         flex-direction: row;
         align-items: center;
-        gap: 8px;
+        gap: 10px;
     }
-    .toggle-switch.vertical .label-text { font-size: 11px; }
-    
-    .time-group {
+    .right-sidebar .toggle-switch.vertical .label-text { font-size: 12px; }
+
+    .right-sidebar .time-group {
         flex-direction: row;
-        width: auto;
-        gap: 8px;
+        width: 100%;
+        gap: 10px;
         align-items: center;
+        justify-content: flex-start;
     }
-    .time-input-wrapper {
+    .right-sidebar .time-input-wrapper {
         width: auto;
-        flex-direction: row; 
-        gap: 4px;
+        flex-direction: row;
+        gap: 6px;
         align-items: center;
+        flex: 0 1 auto;
     }
-    .mini-label { display: block; font-size: 10px; margin: 0; margin-right: 4px; }
-    .time-icon { transform: rotate(-90deg); }
-    
+    .right-sidebar .mini-label { display: block; font-size: 11px; margin: 0; margin-right: 4px; }
+    .right-sidebar .time-icon { transform: rotate(-90deg); }
+    .right-sidebar .time-select-mini { min-width: 80px; }
+
     .sidebar-btn.text-only {
         padding: 0 10px;
         min-width: unset;
         width: auto;
+    }
+
+    /* The Today/prev/next group inside the sheet — full-width row */
+    .right-sidebar .sidebar-section:first-child {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+    .right-sidebar #btn-today {
+        width: 100%;
     }
 }
 
@@ -1060,13 +1161,27 @@ h1, h2 {
     padding: 0;
 }
 
+.cal-settings-cal-list-head,
 .cal-settings-cal-row {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr 56px 80px;
     align-items: center;
-    justify-content: space-between;
     gap: 12px;
-    padding: 12px 0;
+    padding: 10px 0;
     border-bottom: 1px solid var(--border-color);
+}
+
+.cal-settings-cal-list-head {
+    padding-top: 0;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.cal-settings-cal-list-head-col {
+    text-align: center;
 }
 
 .cal-settings-cal-row:last-child {
@@ -1074,7 +1189,6 @@ h1, h2 {
 }
 
 .cal-settings-cal-name {
-    flex: 1;
     min-width: 0;
     font-weight: 600;
     font-size: 15px;
@@ -1083,24 +1197,10 @@ h1, h2 {
     text-overflow: ellipsis;
 }
 
-.cal-settings-toggle-form {
+.cal-settings-toggle-cell {
     margin: 0;
-    flex-shrink: 0;
-}
-
-.cal-settings-toggle {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    cursor: pointer;
-    margin: 0;
-}
-
-.cal-settings-toggle-text {
-    font-size: 12px;
-    font-weight: 500;
-    color: var(--muted);
-    white-space: nowrap;
+    justify-content: center;
 }
 
 .cal-settings-toggle-input {

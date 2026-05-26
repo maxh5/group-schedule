@@ -31,10 +31,10 @@ This app helps **you, friends, and a small business** see **one combined weekly 
 | **Multiple calendar accounts** (`/calendar-settings`) | **DONE** | A user can connect multiple Google accounts. Each connection stores a `UserOAuthToken` row. `UserLinkedCalendar` rows are scoped to the owning token. |
 | **iCloud calendar integration** | **DONE** | Connect via CalDAV at `https://caldav.icloud.com/` using an app-specific password (`UserOAuthToken` with `provider='apple'`, credential stored in `refresh_token`). Uses the `caldav` Python library; read-only. Implemented in [`extras/icloud_calendar.py`](extras/icloud_calendar.py). |
 | **Outlook / Microsoft Graph integration** | LATER | Microsoft OAuth + Graph API for `/me/calendars` and `/me/calendarview`. Slot in as a third `provider='microsoft'` analog to the Google flow. |
-| **Performance / caching** | LATER | Requests are slow — likely a combination of unverified-app Google throttling and per-request live API calls. Investigate: (a) whether the unverified-app quota is the bottleneck, (b) adding a short-lived in-memory or DB cache keyed on `(user_id, week_start)` with a ~5-min TTL. |
-| **Mobile weekly view** | LATER | The weekly grid does not scale on narrow screens. Fix with CSS media queries — collapse to a 3-day or single-day scroll view on small viewports. |
-| **Weekly view defaults** | LATER | Default to full 7 days on desktop; reduce column gap; replace the current today-highlight with a subtler indicator (e.g. thin colored top border on the column header). |
-| **Monthly view** | LATER | A grid calendar where each day cell shows stacked color bars representing tracked people's busy time. Open design questions: (a) how many people before cells get crowded? (b) free/busy color bars vs. event-count dots? (c) click-to-expand to day detail? (d) interaction with group vs. individual filtering? Resolve these with the owner before building. |
+| **Performance / caching** | IN PROGRESS | Google fetches still take several seconds per week. Client UX fix is **DONE**: on every week-nav, `fetchWeekEvents` immediately blanks `window.ALL_EVENTS` and re-renders so stale events disappear instantly; a monotonic `fetchToken` discards stale responses if the user clicks again mid-fetch; the API date is formatted in **local time** (not UTC) so users east of UTC don't get the previous day's `week_start`; the fetch uses `cache: 'no-store'`. The active container also gets a `.is-loading` class while the request is in flight. **Still LATER**: per-week client-side `weekStart -> events[]` cache + background neighbor prefetch (the foundation that will also drive the monthly view), and the longer-term server-side `(user_id, week_start)` cache with a ~5-min TTL. |
+| **Mobile weekly view** | **DONE** | On viewports `<=767px` the grid becomes a 3-day rolling window driven by `CFG.mobileDayOffset` and a `.day.mobile-visible` class. Horizontal swipe on `#days` shifts the window by ±1 day; running off either end (offset `<0` or `>4`) auto-advances the week. The header collapses into a sticky **`mobile-context-strip`** (prev / date+status / next / gear) populated by `window.updateMobileContextHeader()`; the right sidebar becomes a slide-up settings sheet behind the gear button, with a backdrop, grab handle, and swipe-down-to-close. Tooltips become tap-to-pin and render as a bottom strip on touch. Sidebar nav labels are hidden on mobile (icon-only); the "Coming soon" placeholder is hidden too. `html, body { height: 100dvh; overflow: hidden }` prevents the calendar from spilling below the viewport. |
+| **Weekly view defaults** | PARTIAL | **DONE**: weekends (Sat/Sun) are **always** shown — the Sat/Sun toggle and its CSS/JS hooks have been removed; the week is always Mon–Sun on both viewports. The "today" highlight is now a thin colored top border via a `.day.is-today::before` pseudo-element (no full-column tint, no extra padding on the day-label so the canvas stays aligned with the time column). **LATER**: column-gap tuning if still desired. |
+| **Monthly view** | PLANNED | Design decisions captured (see `.cursor/plans/`): single page with a `Week / Month` toggle (no reload, shared client cache); each day cell shows stacked color bars per visible person (length = fraction of their visible-day window they're busy), capped at 6 + "+N" pill; click a day cell jumps to weekly view at that day's Monday; on narrow viewports each cell collapses to day number + one combined busy bar. View preference persists in `localStorage`. Implementation depends on the per-week cache (see Performance / caching above). |
 | **Add calendar items + SMS invite** | LATER | Allow a user to create an event (title, date/time, invitees from friends/groups) and send an email-to-SMS gateway message asking each invitee to add it. Open questions: which SMS gateway(s)? opt-in / phone number collection flow? does the event write back to Google Calendar or stay app-local? |
 
 ---
@@ -126,14 +126,14 @@ There is **no** generic "custom event" path outside Google + this class-derived 
 
 - **`/classes`**: POST adds enrollment; may call `fetch_class_by_section` / `parse_class_item` from `extras/api.py`.
 - **`/api`**: GET debug page; calls `fetch_class_by_section` when `?section=` is present — **not** protected by `@login_required`.
-- Templates: `templates/classes.html`, `templates/api.html`; nav link **Classes** in `templates/base.html`.
+- Templates: `templates/classes.html`, `templates/api.html`. The **Classes** nav link in `templates/base.html` has been **removed** so the legacy class flow is no longer reachable from the UI — the route still resolves at `/classes` if you visit it directly, consistent with the "keep code, hide from users" stance.
 
 ### Front-end contract (do not break silently)
 
-- `templates/calendar.html` seeds `window.CFG` with `people` and `events` for the initial week.
-- Week navigation uses **`GET /api/events?week_start=YYYY-MM-DD`** (JSON).
+- `templates/calendar.html` inline script seeds `const ALL_PEOPLE` and `window.ALL_EVENTS` for the initial week from Flask. Subsequent week navigation refreshes `window.ALL_EVENTS` via the API.
+- Week navigation uses **`GET /api/events?week_start=YYYY-MM-DD`** (JSON). `week_start` **must be the local-time Monday** (formatted via `formatLocalDate` in `calendar.js`, not `toISOString().split('T')[0]`).
 
-Each event in `events` / API response should match what `app.py` currently emits:
+Each event in the API response should match what `app.py` currently emits:
 
 - **`day`**: integer weekday, **0 = Monday … 6 = Sunday** (Python `date.weekday()`).
 - **`start`**, **`end`**: strings `"HH:MM"` (24h from `strftime`).
@@ -141,6 +141,16 @@ Each event in `events` / API response should match what `app.py` currently emits
 - **`title`**: string.
 
 `static/js/calendar.js` builds busy gradients from this shape. If the backend changes shape or semantics, update the JS and this document together.
+
+### Calendar JS state and exposed API
+
+- `CFG` (in `static/js/calendar.js`): per-day labels, work-hour window, dimensions, and `mobileDayOffset` (the start day of the 3-day mobile window, 0–4).
+- `window.ALL_EVENTS`, `window.VISIBLE_USER_IDS`, `window.CURRENT_USER_ID`, `window.currentWeekStart`: global state for the active week + filter context.
+- `window.CalendarPrototype.redraw(events, people)`: imperative repaint entry point used by the inline `updateCalendar()` after filter changes or new event data arrives.
+- `window.calendarNav.{prev,next,today}`: viewport-aware navigation entry points used by both the desktop sidebar buttons and the mobile context strip. On desktop these jump by a full week; on mobile `prev`/`next` shift the 3-day window by one day and auto-advance the week at the edges.
+- `window.updateMobileContextHeader()`: refreshes the date label inside `mobile-context-strip` after any nav.
+- `window.hideCalendarTooltip()`: call before any view change to dismiss a tap-pinned mobile tooltip so it can't display stale content for a different week/day.
+- `fetchWeekEvents()` is race-safe via a monotonic `fetchToken`; stale in-flight responses are dropped if the user navigates again before they resolve.
 
 ### User colors
 

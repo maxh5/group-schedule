@@ -144,6 +144,7 @@ class UserLinkedCalendar(db.Model):
     summary = db.Column(db.String(512), nullable=False, default="")
     background_color = db.Column(db.String(32), nullable=True)
     included_in_main_view = db.Column(db.Boolean, nullable=False, default=True)
+    hide_event_titles = db.Column(db.Boolean, nullable=False, default=False)
 
     user = db.relationship("User", back_populates="linked_calendars")
     oauth_token = db.relationship("UserOAuthToken", back_populates="linked_calendars")

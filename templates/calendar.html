@@ -17,12 +17,28 @@
         <div class="title-group">
           <div class="title">Weekly Availability</div>
         </div>
-        
+
         <div class="current-status" id="current-status">
           <span class="status-text" id="status-text">Checking status...</span>
         </div>
-        
+
         <span class="date-range" id="date-range-display">Loading...</span>
+      </div>
+
+      <div class="mobile-context-strip" aria-label="Calendar navigation">
+        <button class="mobile-ctx-btn" id="mobile-ctx-prev" title="Previous day" aria-label="Previous day" type="button">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+        </button>
+        <button class="mobile-ctx-center" id="mobile-ctx-today" title="Jump to Today" aria-label="Jump to today" type="button">
+          <span class="mobile-ctx-date" id="mobile-ctx-date">Loading…</span>
+          <span class="mobile-ctx-status" id="mobile-ctx-status">Checking status…</span>
+        </button>
+        <button class="mobile-ctx-btn" id="mobile-ctx-next" title="Next day" aria-label="Next day" type="button">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+        </button>
+        <button class="mobile-ctx-btn" id="mobile-ctx-gear" title="Calendar settings" aria-label="Open calendar settings" type="button">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+        </button>
       </div>
     </div>
 
@@ -32,6 +48,8 @@
       <div id="current-time-marker" style="display: none;"></div>
     </div>
   </div>
+
+  <div id="settings-sheet-backdrop" class="settings-sheet-backdrop" aria-hidden="true"></div>
 
   <div id="tooltip" class="tooltip" role="dialog" aria-hidden="true">
     <span class="time" id="tooltip-time">08:00</span>
@@ -322,13 +340,6 @@
                   <select id="end-time" class="time-select-mini"></select>
              </div>
          </div>
-
-         <!-- Weekend Toggle -->
-         <label class="toggle-switch vertical" title="Toggle Weekends">
-             <input type="checkbox" id="weekend-toggle">
-             <span class="slider"></span>
-             <span class="label-text">SAT & SUN</span>
-         </label>
     </div>
 
     <div class="divider-h" style="width: 100%; flex-shrink: 0;"></div>

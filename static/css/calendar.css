@@ -6,7 +6,6 @@
     --canvas-height: 720px; /* px (maps to hours) */
     --card-bg: #ffffff;
     --time-col-width: 50px;
-    --visible-days: 5;
     --container-bg: #ffffff;
     --container-border: rgba(226, 232, 240, 0.8);
     --day-bg: rgba(255,255,255,0.02);
@@ -59,10 +58,6 @@
     box-sizing: border-box;
   }
   
-  .container.show-weekends {
-    --visible-days: 7;
-  }
-
   .header {
     margin-bottom: 12px;
     flex-shrink: 0;
@@ -74,6 +69,11 @@
     justify-content: space-between;
     gap: 20px;
     flex-wrap: wrap;
+  }
+
+  /* Mobile-only context strip; replaces .header-top on small screens */
+  .mobile-context-strip {
+    display: none;
   }
 
   .title-group {
@@ -209,24 +209,6 @@
   .toggle-switch input:checked + .slider { background-color: #3b82f6; }
   .toggle-switch input:checked + .slider::after { transform: translateX(16px); }
 
-  /* Weekend Logic */
-  .day[data-day="5"], .day[data-day="6"] { 
-    display: none; 
-  }
-
-  @keyframes fadeWeekendIn {
-    from { opacity: 0; transform: translateY(4px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-
-  .container.show-weekends .day[data-day="5"], 
-  .container.show-weekends .day[data-day="6"] { 
-    display: flex;
-    opacity: 0;
-    animation: fadeWeekendIn 0.2s ease-out forwards;
-    animation-delay: 0.1s;
-  }
-
   /* Time Selectors */
   .time-select {
     background: transparent;
@@ -256,6 +238,17 @@
     position: relative;
   }
 
+  /* Loading state while the API fetches a new week. Canvases dim and gently
+     pulse to signal that data is being refreshed (Google Calendar fetches can
+     take a few seconds). */
+  .week.is-loading .day canvas {
+    animation: calendar-loading-pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes calendar-loading-pulse {
+    0%, 100% { opacity: 0.55; }
+    50%      { opacity: 0.85; }
+  }
+
   .time-column{
     flex: 0 0 var(--time-col-width); /* Fixed width, no grow/shrink */
     width: var(--time-col-width);
@@ -264,6 +257,12 @@
     height: 100%;
     position: relative;
     box-sizing: border-box;
+  }
+
+  /* Time labels must stay on one line; two-digit hours (10/11/12) would
+     otherwise wrap inside the narrow mobile column. */
+  .time-column > div {
+    white-space: nowrap;
   }
 
   .days{
@@ -296,8 +295,21 @@
   }
 
   .day.is-today {
-    background: var(--day-today-bg); 
-    border-color: var(--day-today-border);
+    background: transparent;
+    border-color: transparent;
+  }
+  /* Subtle today indicator: a thin colored bar across the top of the column.
+     Rendered as ::before so it does not change the day-label height (which
+     would offset the canvas vs the time column gutter). */
+  .day.is-today::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 10px;
+    right: 10px;
+    height: 3px;
+    background: var(--day-today-border);
+    border-radius: 0 0 2px 2px;
   }
   .day.is-today .day-label {
     color: var(--day-today-label);
@@ -344,6 +356,16 @@
     display:none;
   }
 
+  /* Mobile bottom-strip mode: full-width near the bottom so the finger doesn't cover it */
+  .tooltip.tooltip-mobile-strip {
+    pointer-events: auto;
+    min-width: 0;
+    max-width: none;
+    padding: 14px 16px;
+    border-radius: 14px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+  }
+
   .tooltip .time { font-weight:700; margin-bottom:6px; display:block; }
   .attendee { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
   .dot { width:10px; height:10px; border-radius:50%; flex:0 0 10px; }
@@ -360,23 +382,17 @@
     .main-content {
       display: flex;
       flex-direction: column;
-      padding: 12px;
-      padding-bottom: 0;
+      /* Reduced left/right padding so the time column hugs the screen edge.
+         Bottom keeps the safe-area inset for notched devices. */
+      padding: 10px 6px calc(env(safe-area-inset-bottom, 0px) + 10px);
       overflow: hidden;
-    }
-
-    /* Reserve space for the fixed bottom bar */
-    .main-content::after {
-      content: '';
-      display: block;
-      flex-shrink: 0;
-      height: 160px; /* Account for bottom navigation bar height + spacing */
+      min-height: 0;
     }
 
     .container {
-      flex: 1;
+      flex: 1 1 auto;
       min-height: 0;
-      padding: 12px;
+      padding: 8px;
     }
 
     .week {
@@ -385,9 +401,18 @@
     }
 
     .time-column {
-      flex: 0 0 40px;
-      width: 40px;
+      /* Wide enough to fit "12 PM" / "10 AM" at 10px on one line. */
+      flex: 0 0 34px;
+      width: 34px;
       font-size: 10px;
+    }
+
+    /* 3-day rolling window: hide every day column unless tagged .mobile-visible */
+    .day { display: none !important; }
+    .day.mobile-visible {
+      display: flex !important;
+      opacity: 1 !important;
+      animation: none !important;
     }
 
     .day {
@@ -395,7 +420,7 @@
     }
 
     .day-label {
-      font-size: 12px;
+      font-size: 13px;
       margin-bottom: 4px;
     }
 
@@ -403,43 +428,88 @@
       margin-bottom: 8px;
     }
 
+    /* Desktop header is hidden on mobile; the context strip below replaces it */
     .header-top {
-      gap: 8px;
-      flex-wrap: wrap;
+      display: none;
     }
 
-    .title-group {
-      min-width: unset;
+    .mobile-context-strip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 10px;
+      background: var(--sidebar-bg);
+      border: 1px solid var(--border-color);
+      border-radius: 16px;
+      box-shadow: 0 2px 8px var(--shadow);
     }
 
-    .current-status {
-      min-width: unset;
+    .mobile-ctx-btn {
+      flex: 0 0 auto;
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+
+    .mobile-ctx-btn:hover,
+    .mobile-ctx-btn:active {
+      background: var(--hover-bg);
+      color: var(--text-color);
+      border-color: var(--border-color);
+    }
+
+    .mobile-ctx-center {
       flex: 1 1 auto;
-      order: 3;
-      width: 100%;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1px;
+      background: transparent;
+      border: none;
+      color: var(--text-color);
+      cursor: pointer;
+      padding: 4px 6px;
+      border-radius: 10px;
+      transition: background 0.15s;
     }
 
-    .status-text {
+    .mobile-ctx-center:hover,
+    .mobile-ctx-center:active {
+      background: var(--hover-bg);
+    }
+
+    .mobile-ctx-date {
       font-size: 14px;
+      font-weight: 700;
+      color: var(--text-color);
+      line-height: 1.15;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
     }
 
-    .title {
-      font-size: 16px;
+    .mobile-ctx-status {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--muted);
+      line-height: 1.15;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
     }
 
-    .date-range {
-      font-size: 13px;
-      min-width: unset;
-    }
-
-    .view-controls {
-      font-size: 12px;
-      padding: 4px 8px;
-      gap: 8px;
-    }
-
-    .icon-btn {
-      width: 28px;
-      height: 28px;
-    }
+    .mobile-ctx-status.busy { color: #ef4444; }
+    .mobile-ctx-status.free { color: #22c55e; }
   }

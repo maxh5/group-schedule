@@ -2,6 +2,39 @@
 
 {% block title %}Calendar settings{% endblock %}
 
+{% macro calendar_list(calendars) %}
+<div class="cal-settings-cal-list-head">
+    <span class="cal-settings-cal-list-head-name"></span>
+    <span class="cal-settings-cal-list-head-col" title="Include this calendar on your week view">Show</span>
+    <span class="cal-settings-cal-list-head-col" title="Replace event titles with 'Busy' for everyone except you">Anonymize</span>
+</div>
+<ul class="cal-settings-cal-list">
+    {% for cal in calendars %}
+    <li class="cal-settings-cal-row">
+        <span class="cal-settings-cal-name" title="{{ cal.summary }}">{{ cal.summary }}</span>
+        <form method="post" class="cal-settings-toggle-cell">
+            <input type="hidden" name="action" value="toggle_calendar">
+            <input type="hidden" name="row_id" value="{{ cal.id }}">
+            <input type="hidden" name="field" value="included">
+            <input type="checkbox" name="value" value="1" class="cal-settings-toggle-input"
+                   aria-label="Show {{ cal.summary }} on week view"
+                   {% if cal.included_in_main_view %}checked{% endif %}
+                   onchange="this.form.submit()">
+        </form>
+        <form method="post" class="cal-settings-toggle-cell">
+            <input type="hidden" name="action" value="toggle_calendar">
+            <input type="hidden" name="row_id" value="{{ cal.id }}">
+            <input type="hidden" name="field" value="hide_titles">
+            <input type="checkbox" name="value" value="1" class="cal-settings-toggle-input"
+                   aria-label="Hide event titles in {{ cal.summary }} from other viewers"
+                   {% if cal.hide_event_titles %}checked{% endif %}
+                   onchange="this.form.submit()">
+        </form>
+    </li>
+    {% endfor %}
+</ul>
+{% endmacro %}
+
 {% block content %}
 <div class="page-header">
     <h1 class="page-title">Calendar settings</h1>
@@ -79,25 +112,7 @@
             <h3 class="cal-settings-subheading">Calendars</h3>
 
             {% if account.calendars %}
-            <ul class="cal-settings-cal-list">
-                {% for cal in account.calendars %}
-                <li class="cal-settings-cal-row">
-                    <span class="cal-settings-cal-name" title="{{ cal.summary }}">{{ cal.summary }}</span>
-                    <form method="post" class="cal-settings-toggle-form">
-                        <input type="hidden" name="action" value="toggle_calendar">
-                        <input type="hidden" name="external_id" value="{{ cal.external_id }}">
-                        <input type="hidden" name="account_id" value="{{ account.id }}">
-                        <label class="cal-settings-toggle">
-                            <span class="cal-settings-toggle-text">Week view</span>
-                            <input type="checkbox" name="included" value="1" class="cal-settings-toggle-input"
-                                   aria-label="Include on main week view"
-                                   {% if cal.included_in_main_view %}checked{% endif %}
-                                   onchange="this.form.submit()">
-                        </label>
-                    </form>
-                </li>
-                {% endfor %}
-            </ul>
+            {{ calendar_list(account.calendars) }}
             {% else %}
             <p class="cal-settings-empty">No calendars yet. Sync to load them from Google.</p>
             {% endif %}
@@ -116,14 +131,6 @@
 
     </section>
     {% endfor %}
-
-    {# ---- Add another Google account ---- #}
-    <div class="cal-settings-add-account">
-        <a href="{{ add_account_url }}" class="btn btn-secondary">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            Add another Google account
-        </a>
-    </div>
 
     {# ---- One card per linked iCloud account ---- #}
     {% for account in apple_accounts %}
@@ -157,25 +164,7 @@
             <h3 class="cal-settings-subheading">Calendars</h3>
 
             {% if account.calendars %}
-            <ul class="cal-settings-cal-list">
-                {% for cal in account.calendars %}
-                <li class="cal-settings-cal-row">
-                    <span class="cal-settings-cal-name" title="{{ cal.summary }}">{{ cal.summary }}</span>
-                    <form method="post" class="cal-settings-toggle-form">
-                        <input type="hidden" name="action" value="toggle_calendar">
-                        <input type="hidden" name="external_id" value="{{ cal.external_id }}">
-                        <input type="hidden" name="account_id" value="{{ account.id }}">
-                        <label class="cal-settings-toggle">
-                            <span class="cal-settings-toggle-text">Week view</span>
-                            <input type="checkbox" name="included" value="1" class="cal-settings-toggle-input"
-                                   aria-label="Include on main week view"
-                                   {% if cal.included_in_main_view %}checked{% endif %}
-                                   onchange="this.form.submit()">
-                        </label>
-                    </form>
-                </li>
-                {% endfor %}
-            </ul>
+            {{ calendar_list(account.calendars) }}
             {% else %}
             <p class="cal-settings-empty">No calendars yet. Sync to load them from iCloud.</p>
             {% endif %}
@@ -183,33 +172,40 @@
     </section>
     {% endfor %}
 
-    {# ---- Connect an iCloud account (collapsed by default) ---- #}
-    <details class="cal-settings-connect-disclosure">
-        <summary class="cal-settings-connect-trigger">
-            <svg class="cal-settings-connect-trigger-plus" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            <span>Connect iCloud account</span>
-        </summary>
-        <div class="cal-settings-connect-panel">
-            <p class="cal-settings-connect-hint">
-                Need an app-specific password? Generate one at
-                <a href="https://appleid.apple.com" target="_blank" rel="noopener">appleid.apple.com</a>
-                under <strong>Sign-In and Security &rarr; App-Specific Passwords</strong>
-                (requires two-factor authentication on your Apple ID).
-            </p>
-            <form method="post" class="cal-settings-apple-connect-form">
-                <input type="hidden" name="action" value="add_apple_account">
-                <label class="cal-settings-field">
-                    <span class="cal-settings-field-label">Apple ID (email)</span>
-                    <input type="email" name="apple_id" class="form-input" placeholder="you@icloud.com" required autocomplete="username">
-                </label>
-                <label class="cal-settings-field">
-                    <span class="cal-settings-field-label">App-specific password</span>
-                    <input type="password" name="app_password" class="form-input" placeholder="xxxx-xxxx-xxxx-xxxx" required autocomplete="off">
-                </label>
-                <button type="submit" class="btn btn-primary">Connect</button>
-            </form>
-        </div>
-    </details>
+    {# ---- Add another account (Google + iCloud, grouped) ---- #}
+    <div class="cal-settings-add-account">
+        <a href="{{ add_account_url }}" class="btn btn-secondary">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Add another Google account
+        </a>
+
+        <details class="cal-settings-connect-disclosure">
+            <summary class="cal-settings-connect-trigger">
+                <svg class="cal-settings-connect-trigger-plus" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                <span>Add another iCloud account</span>
+            </summary>
+            <div class="cal-settings-connect-panel">
+                <p class="cal-settings-connect-hint">
+                    Need an app-specific password? Generate one at
+                    <a href="https://appleid.apple.com" target="_blank" rel="noopener">appleid.apple.com</a>
+                    under <strong>Sign-In and Security &rarr; App-Specific Passwords</strong>
+                    (requires two-factor authentication on your Apple ID).
+                </p>
+                <form method="post" class="cal-settings-apple-connect-form">
+                    <input type="hidden" name="action" value="add_apple_account">
+                    <label class="cal-settings-field">
+                        <span class="cal-settings-field-label">Apple ID (email)</span>
+                        <input type="email" name="apple_id" class="form-input" placeholder="you@icloud.com" required autocomplete="username">
+                    </label>
+                    <label class="cal-settings-field">
+                        <span class="cal-settings-field-label">App-specific password</span>
+                        <input type="password" name="app_password" class="form-input" placeholder="xxxx-xxxx-xxxx-xxxx" required autocomplete="off">
+                    </label>
+                    <button type="submit" class="btn btn-primary">Connect</button>
+                </form>
+            </div>
+        </details>
+    </div>
 
 </div>
 {% endblock %}
