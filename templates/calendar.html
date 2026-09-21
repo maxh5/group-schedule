@@ -60,107 +60,109 @@
   // Initialize with data from Flask
   const ALL_PEOPLE = {{ people | tojson }};
   window.ALL_EVENTS = {{ events | tojson }}; // Use window.ALL_EVENTS so it can be updated when week changes
-  const FRIENDS_IDS = {{ friends_ids | tojson }};
+  const GROUPS = {{ groups | tojson }};
   window.CURRENT_USER_ID = {{ current_user_id | tojson }}; // Make globally accessible for color differentiation
   const CURRENT_USER_ID = window.CURRENT_USER_ID; // Keep local reference for compatibility
-  
-  // Initial Load: Show only ME
-  function getActiveFilters() {
-     const showMe = document.getElementById('filter-me').checked;
-     const showFriends = document.getElementById('filter-friends-all').checked;
-     
-     // Collect active group IDs
-     const activeGroupIds = [];
-     document.querySelectorAll('.group-checkbox:checked').forEach(cb => {
-         // cb.dataset.members is array of user ids
-         activeGroupIds.push(JSON.parse(cb.dataset.members));
-     });
+  const PEOPLE_BY_ID = {};
+  ALL_PEOPLE.forEach(p => { PEOPLE_BY_ID[p.id] = p; });
 
-     // Build set of visible user IDs
-     const visibleUserIds = new Set();
-     if (showMe) visibleUserIds.add(CURRENT_USER_ID);
-     if (showFriends) {
-         FRIENDS_IDS.forEach(id => visibleUserIds.add(id));
-     }
-     activeGroupIds.forEach(members => {
-         members.forEach(id => visibleUserIds.add(id));
-     });
-     
-     return visibleUserIds;
+  // One active set: just you, one group, or you plus one member of that group.
+  let calendarView = { mode: 'me', groupId: null, personId: null };
+
+  function groupById(id) {
+      return GROUPS.find(g => g.id === id) || null;
   }
 
-  function saveFilterState() {
-      const filterState = {
-          showMe: document.getElementById('filter-me')?.checked || false,
-          showFriends: document.getElementById('filter-friends-all')?.checked || false,
-          activeGroups: []
-      };
-      
-      // Collect checked group indices
-      document.querySelectorAll('.group-checkbox').forEach((cb, index) => {
-          if (cb.checked) {
-              filterState.activeGroups.push(index);
-          }
-      });
-      
-      localStorage.setItem('calendarFilters', JSON.stringify(filterState));
-  }
-  
-  function loadFilterState() {
-      const saved = localStorage.getItem('calendarFilters');
-      let filterState;
-      
-      if (!saved) {
-          // Set defaults: show Me only
-          filterState = {
-              showMe: true,
-              showFriends: false,
-              activeGroups: []
-          };
-      } else {
-          try {
-              filterState = JSON.parse(saved);
-          } catch (e) {
-              console.error('Failed to load filter state:', e);
-              // Use defaults on parse error
-              filterState = {
-                  showMe: true,
-                  showFriends: false,
-                  activeGroups: []
-              };
+  function normalizeView(view) {
+      if (!view || view.mode === 'me') {
+          return { mode: 'me', groupId: null, personId: null };
+      }
+      const group = groupById(Number(view.groupId));
+      if (!group) return { mode: 'me', groupId: null, personId: null };
+      if (view.mode === 'person') {
+          const personId = Number(view.personId);
+          if (personId && personId !== CURRENT_USER_ID && group.members.includes(personId)) {
+              return { mode: 'person', groupId: group.id, personId };
           }
       }
-      
-      // Apply filter state to checkboxes
-      const meCheckbox = document.getElementById('filter-me');
-      if (meCheckbox) meCheckbox.checked = filterState.showMe;
-      
-      const friendsCheckbox = document.getElementById('filter-friends-all');
-      if (friendsCheckbox) friendsCheckbox.checked = filterState.showFriends;
-      
-      // Restore group filters (uncheck all first, then check saved ones)
-      const groupCheckboxes = document.querySelectorAll('.group-checkbox');
-      groupCheckboxes.forEach((cb, index) => {
-          cb.checked = filterState.activeGroups.includes(index);
+      return { mode: 'group', groupId: group.id, personId: null };
+  }
+
+  function visibleIdsFor(view) {
+      const ids = new Set([CURRENT_USER_ID]);
+      if (view.mode === 'me') return ids;
+      const group = groupById(view.groupId);
+      if (!group) return ids;
+      if (view.mode === 'person') {
+          ids.add(view.personId);
+          return ids;
+      }
+      group.members.forEach(id => ids.add(id));
+      return ids;
+  }
+
+  function loadCalendarView() {
+      let parsed = null;
+      try {
+          parsed = JSON.parse(localStorage.getItem('calendarView') || 'null');
+      } catch (e) {
+          parsed = null;
+      }
+      calendarView = normalizeView(parsed);
+  }
+
+  function saveCalendarView() {
+      localStorage.setItem('calendarView', JSON.stringify(calendarView));
+  }
+
+  function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, ch => ({
+          '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[ch]));
+  }
+
+  function syncSetControls() {
+      document.querySelectorAll('#set-list .set-option').forEach(btn => {
+          const selected = btn.dataset.mode === 'me'
+              ? calendarView.mode === 'me'
+              : calendarView.mode !== 'me' && Number(btn.dataset.groupId) === calendarView.groupId;
+          btn.classList.toggle('is-selected', selected);
       });
+
+      const lens = document.getElementById('member-lens');
+      const list = document.getElementById('member-lens-list');
+      if (!lens || !list) return;
+      const group = calendarView.mode === 'me' ? null : groupById(calendarView.groupId);
+      if (!group) {
+          lens.hidden = true;
+          list.innerHTML = '';
+          return;
+      }
+      lens.hidden = false;
+      const everyoneSelected = calendarView.mode === 'group';
+      const buttons = [
+          `<button type="button" class="set-option${everyoneSelected ? ' is-selected' : ''}" data-mode="everyone">Everyone</button>`
+      ];
+      group.members.forEach(id => {
+          if (id === CURRENT_USER_ID) return;
+          const person = PEOPLE_BY_ID[id];
+          const name = person ? person.name : 'Member';
+          const selected = calendarView.mode === 'person' && calendarView.personId === id;
+          buttons.push(
+              `<button type="button" class="set-option${selected ? ' is-selected' : ''}" data-mode="person" data-person-id="${id}">${escapeHtml(name)}</button>`
+          );
+      });
+      list.innerHTML = buttons.join('');
   }
 
   function updateCalendar() {
       if (!window.CalendarPrototype) return;
-      
-      const visibleIds = getActiveFilters();
-      
-      // Store visible IDs globally so drawDayGradient can access them
-      window.VISIBLE_USER_IDS = visibleIds;
-      
-      // Filter People
-      const filteredPeople = ALL_PEOPLE.filter(p => visibleIds.has(p.id));
-      
-      // Pass ALL events to redraw - filtering will happen in drawDayGradient
+
+      window.VISIBLE_USER_IDS = visibleIdsFor(calendarView);
+      const filteredPeople = ALL_PEOPLE.filter(p => window.VISIBLE_USER_IDS.has(p.id));
       window.CalendarPrototype.redraw(window.ALL_EVENTS, filteredPeople);
-      
-      // Save filter state to localStorage
-      saveFilterState();
+      saveCalendarView();
+      syncSetControls();
   }
 
   // Update current time marker position
@@ -283,8 +285,39 @@
   // Attach listeners after DOM load
   document.addEventListener('DOMContentLoaded', () => {
      
-     // Load saved filter state
-     loadFilterState();
+     loadCalendarView();
+
+     const setList = document.getElementById('set-list');
+     if (setList) {
+         setList.addEventListener('click', (e) => {
+             const btn = e.target.closest('.set-option');
+             if (!btn) return;
+             if (btn.dataset.mode === 'me') {
+                 calendarView = { mode: 'me', groupId: null, personId: null };
+             } else if (btn.dataset.mode === 'group') {
+                 calendarView = { mode: 'group', groupId: Number(btn.dataset.groupId), personId: null };
+             }
+             updateCalendar();
+         });
+     }
+
+     const memberLens = document.getElementById('member-lens');
+     if (memberLens) {
+         memberLens.addEventListener('click', (e) => {
+             const btn = e.target.closest('.set-option');
+             if (!btn || calendarView.mode === 'me') return;
+             if (btn.dataset.mode === 'everyone') {
+                 calendarView = { mode: 'group', groupId: calendarView.groupId, personId: null };
+             } else if (btn.dataset.mode === 'person') {
+                 calendarView = {
+                     mode: 'person',
+                     groupId: calendarView.groupId,
+                     personId: Number(btn.dataset.personId),
+                 };
+             }
+             updateCalendar();
+         });
+     }
      
      // Update marker position on window resize
      window.addEventListener('resize', () => {
@@ -344,124 +377,18 @@
 
     <div class="divider-h" style="width: 100%; flex-shrink: 0;"></div>
 
-    <div class="sidebar-section" style="flex: 1 1 0; min-height: 0; overflow: hidden;">
-        <div class="sidebar-header-text" style="flex-shrink: 0;">Schedules</div>
-        
-        <!-- Icon Toggles For Me/Friends -->
-        <div style="display: flex; gap: 8px; justify-content: center; margin-bottom: 4px; flex-shrink: 0;">
-            <!-- Me Toggle -->
-            <label title="Me" style="cursor: pointer; position: relative;">
-                <input type="checkbox" id="filter-me" onchange="updateCalendar()" style="position: absolute; opacity: 0; width: 0; height: 0;" class="icon-checkbox">
-                <div class="icon-toggle" style="width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; transition: all 0.2s; border: 2px solid transparent;">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
-                </div>
-            </label>
-
-            <!-- Friends Toggle -->
-            <label title="All Friends" style="cursor: pointer; position: relative;">
-                <input type="checkbox" id="filter-friends-all" onchange="updateCalendar()" style="position: absolute; opacity: 0; width: 0; height: 0;" class="icon-checkbox">
-                <div class="icon-toggle" style="width: 32px; height: 32px; border-radius: 8px; display: flex; align-items: center; justify-content: center; transition: all 0.2s; border: 2px solid transparent;">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
-                </div>
-            </label>
-        </div>
-
-        <style>
-            .icon-toggle {
-                background: var(--hover-bg);
-                color: var(--muted);
-            }
-            .icon-checkbox:checked + .icon-toggle {
-                background: var(--active-bg) !important;
-                color: var(--active-color) !important;
-                border-color: var(--active-color) !important;
-            }
-            .icon-checkbox:hover + .icon-toggle {
-                background: var(--input-border) !important;
-            }
-            .icon-checkbox:checked:hover + .icon-toggle {
-                background: var(--active-bg) !important;
-                opacity: 0.9;
-            }
-        </style>
-
-        {% if groups %}
-        <div class="groups-header" style="font-size: 10px; text-transform: uppercase; color: var(--muted); font-weight: 700; letter-spacing: 0.5px; margin-top: 12px; text-align: center; flex-shrink: 0;">Groups</div>
-        
-        <div class="groups-scroll-container">
+    <div class="sidebar-section calendar-sets">
+        <div class="sidebar-header-text">Schedules</div>
+        <div class="set-list" id="set-list">
+            <button type="button" class="set-option" data-mode="me">Just you</button>
             {% for g in groups %}
-            <label title="{{ g.name }}" class="group-label">
-                <input type="checkbox" class="group-checkbox" data-members="{{ g.members | tojson }}" onchange="updateCalendar()">
-                <div class="group-circle-toggle">
-                    <img src="{{ url_for('static', filename='profile_pics/' + g.profile_image) }}" 
-                        alt="{{ g.name }}"
-                        style="width: 100%; height: 100%; object-fit: cover; border-radius: 50%;"
-                        onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
-                    <span style="display: none; width: 100%; height: 100%; align-items: center; justify-content: center; font-weight: 700; font-size: 14px;">{{ g.name[:2] | upper }}</span>
-                </div>
-            </label>
+            <button type="button" class="set-option" data-mode="group" data-group-id="{{ g.id }}">{{ g.name }}</button>
             {% endfor %}
         </div>
-
-        <style>
-            .groups-scroll-container {
-                display: flex;
-                flex-wrap: wrap;
-                gap: 8px;
-                justify-content: center;
-                align-content: flex-start;
-                overflow-y: auto;
-                overflow-x: hidden;
-                flex: 1;
-                min-height: 0;
-                width: 100%;
-                padding: 4px 0;
-            }
-            
-            .group-label {
-                cursor: pointer;
-                position: relative;
-                flex-shrink: 0;
-            }
-            
-            .group-checkbox {
-                position: absolute;
-                opacity: 0;
-                width: 0;
-                height: 0;
-            }
-            
-            .group-circle-toggle {
-                width: 34px;
-                height: 34px;
-                border-radius: 50%;
-                background: var(--hover-bg);
-                color: var(--muted);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-size: 12px;
-                font-weight: 600;
-                border: 2px solid transparent;
-                transition: all 0.2s;
-            }
-            
-            .group-checkbox:checked + .group-circle-toggle {
-                background: var(--active-bg);
-                color: var(--active-color);
-                border-color: var(--active-color);
-            }
-            
-            .group-checkbox:hover + .group-circle-toggle {
-                background: var(--input-border);
-            }
-            
-            .group-checkbox:checked:hover + .group-circle-toggle {
-                background: var(--active-bg);
-                opacity: 0.9;
-            }
-        </style>
-        {% endif %}
+        <div id="member-lens" class="member-lens" hidden>
+            <div class="sidebar-header-text">With</div>
+            <div class="set-list" id="member-lens-list"></div>
+        </div>
     </div>
 </aside>
 {% endblock %}

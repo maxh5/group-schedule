@@ -106,8 +106,8 @@ def icloud_events_to_week_slots(
 ) -> List[Dict[str, Any]]:
     """Convert caldav event resources to {day, start, end, title} dicts.
 
-    week_end is exclusive. All-day events span the configured work window so
-    they render as a full busy block, matching the Google helper.
+    week_end is exclusive. All-day events are flagged all_day so the client can
+    draw them in a strip instead of painting the whole work day.
     """
     out: List[Dict[str, Any]] = []
     days = (week_end - week_start).days
@@ -161,6 +161,7 @@ def icloud_events_to_week_slots(
                         "start": d0.strftime("%H:%M"),
                         "end": d1.strftime("%H:%M"),
                         "title": title,
+                        "all_day": True,
                     })
                 cur += dt.timedelta(days=1)
             continue

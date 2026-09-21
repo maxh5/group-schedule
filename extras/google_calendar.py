@@ -211,6 +211,7 @@ def google_events_to_week_slots(
                             "start": d0.strftime("%H:%M"),
                             "end": d1.strftime("%H:%M"),
                             "title": summary,
+                            "all_day": True,
                         }
                     )
                 cur += dt.timedelta(days=1)

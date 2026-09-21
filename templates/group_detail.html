@@ -151,25 +151,7 @@
             </div>
             
             <div style="display: flex; align-items: center; gap: 8px;">
-                
-                <!-- 1. Friend Request Button (If not self, and not already friends) -->
-                {% if member.user.id != current_user.id %}
-                    {% if member.user.id not in friend_ids %}
-                        {% if member.user.id in pending_ids %}
-                             <span style="font-size: 11px; color: var(--muted); background: var(--hover-bg); padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border-color);">Request Sent</span>
-                        {% else %}
-                            <form action="{{ url_for('friends') }}" method="post" style="margin:0;">
-                                <input type="hidden" name="friend_user_id" value="{{ member.user.id }}">
-                                <button type="submit" class="btn small" style="padding: 4px 8px; font-size: 11px; background: var(--card-bg); border: 1px solid var(--border-color); color: var(--text-color);">
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px;"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
-                                    Add Friend
-                                </button>
-                            </form>
-                        {% endif %}
-                    {% endif %}
-                {% endif %}
-
-                <!-- 2. Admin Actions -->
+                <!-- Admin Actions -->
                 {% if is_admin and member.user.id != current_user.id %}
                     
                     {% if member.role != 'admin' %}

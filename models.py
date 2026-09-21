@@ -11,7 +11,7 @@ class User(db.Model, UserMixin):
     first_name = db.Column(db.String(25), nullable=False)
     last_name = db.Column(db.String(50), nullable=False)
 
-    # Public @handle for friend/group discovery (set after Google sign-in onboarding)
+    # Public @handle for group discovery (set after Google sign-in onboarding)
     username = db.Column(db.String(30), unique=True, nullable=True)
     profile_image = db.Column(db.String(255), nullable=False, default='default.jpg')
 
@@ -41,22 +41,6 @@ class User(db.Model, UserMixin):
     @property
     def full_name(self) -> str:
         return f"{self.first_name} {self.last_name}".strip() or (self.email or "User")
-
-
-class Friendship(db.Model):
-    """Tracks friend requests and accepted friendships"""
-    __tablename__ = "friendships"
-
-    id = db.Column(db.Integer, primary_key=True)
-    requester_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    receiver_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    status = db.Column(db.String(20), default="pending", nullable=False)  # pending, accepted
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-    requester = db.relationship("User", foreign_keys=[requester_id], backref="sent_requests")
-    receiver = db.relationship("User", foreign_keys=[receiver_id], backref="received_requests")
-
-    __table_args__ = (UniqueConstraint("requester_id", "receiver_id", name="uq_friendship"),)
 
 
 class Group(db.Model):

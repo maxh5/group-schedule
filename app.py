@@ -6,8 +6,9 @@ import secrets
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import or_, inspect, text
+from sqlalchemy import inspect, text
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
 from authlib.integrations.flask_client import OAuth
 
 
@@ -89,38 +90,19 @@ def _google_oauth_configured():
 
 
 def get_related_user_ids(user_id):
-    """Get all user IDs related to the given user (friends + group members).
-    
+    """Users who can appear on this user's calendar: themselves and accepted group members.
+
     Returns:
-        tuple: (set of user_ids, list of friend_user_ids, list of groups_data)
+        tuple: (set of user_ids, list of groups_data)
     """
-    # Get friends
-    friends_query = models.Friendship.query.filter(
-        (models.Friendship.status == 'accepted') &
-        or_(
-            models.Friendship.requester_id == user_id,
-            models.Friendship.receiver_id == user_id
-        )
-    ).all()
-    
-    friend_users = []
-    for f in friends_query:
-        if f.requester_id == user_id:
-            friend_users.append(f.receiver)
-        else:
-            friend_users.append(f.requester)
-    
-    friends_ids = [u.id for u in friend_users]
-    
-    # Get groups and their members (only accepted memberships), ordered by display_order
-    my_memberships = models.GroupMember.query.filter_by(user_id=user_id, status='accepted').order_by(models.GroupMember.display_order).all()
+    my_memberships = models.GroupMember.query.filter_by(
+        user_id=user_id, status='accepted'
+    ).order_by(models.GroupMember.display_order).all()
     groups_data = []
-    all_related_user_ids = set(friends_ids)
-    all_related_user_ids.add(user_id)
-    
+    all_related_user_ids = {user_id}
+
     for m in my_memberships:
         group = m.group
-        # Only include accepted members in the group
         member_ids = [gm.user_id for gm in group.members if gm.status == 'accepted']
         groups_data.append({
             "id": group.id,
@@ -129,8 +111,8 @@ def get_related_user_ids(user_id):
             "profile_image": group.profile_image
         })
         all_related_user_ids.update(member_ids)
-    
-    return all_related_user_ids, friends_ids, groups_data
+
+    return all_related_user_ids, groups_data
 
 
 def _ensure_calendar_schema():
@@ -192,13 +174,71 @@ def _local_tzinfo():
     return datetime.now().astimezone().tzinfo
 
 
+_PROVIDER_FETCH_WORKERS = 8
+
+
+def _event_slot(slot, person_id, redact):
+    item = {
+        'day': slot['day'],
+        'start': slot['start'],
+        'end': slot['end'],
+        'person': person_id,
+        'title': 'Busy' if redact else slot['title'],
+    }
+    if slot.get('all_day'):
+        item['all_day'] = True
+    return item
+
+
+def _refresh_google_token(cid, csec, refresh_token):
+    try:
+        return gcal.refresh_google_access_token(cid, csec, refresh_token)
+    except Exception:
+        app.logger.warning('Google token refresh failed', exc_info=True)
+        return None
+
+
+def _fetch_google_slots(access, cal_id, t_min, t_max, week_start, week_end, local_tz, user_id):
+    try:
+        raw = gcal.events_list_for_calendar(access, cal_id, t_min, t_max)
+        return gcal.google_events_to_week_slots(raw, week_start, week_end, local_tz)
+    except Exception:
+        app.logger.warning(
+            'Google events.list failed user=%s calendar=%s', user_id, cal_id, exc_info=True
+        )
+        return []
+
+
+def _fetch_apple_slots(email, password, calendars, t_min, t_max, week_start, week_end, local_tz, user_id):
+    """calendars is a list of (external_id, hide_titles). Returns [(hide_titles, slots), ...]."""
+    try:
+        client = icloud.make_client(email, password)
+    except Exception:
+        app.logger.warning('iCloud client init failed user=%s', user_id, exc_info=True)
+        return []
+    results = []
+    for cal_id, hide_titles in calendars:
+        try:
+            events = icloud.events_list_for_calendar(client, cal_id, t_min, t_max)
+            slots = icloud.icloud_events_to_week_slots(events, week_start, week_end, local_tz)
+        except Exception:
+            app.logger.warning(
+                'iCloud events fetch failed user=%s calendar=%s', user_id, cal_id, exc_info=True
+            )
+            continue
+        results.append((hide_titles, slots))
+    return results
+
+
 def build_week_events_for_users(user_ids, week_start, week_end, viewer_id=None):
     """
-    Merge DB Event rows (class-derived) with Google Calendar events for enabled linked calendars.
+    Merge DB Event rows (class-derived) with Google and iCloud events for enabled linked calendars.
     week_end is exclusive (first day after the displayed week).
 
     Refresh tokens are resolved via UserOAuthToken rows; legacy rows with oauth_token_id=NULL
     fall back to user.google_refresh_token.
+
+    Provider HTTP runs on a thread pool. ORM access stays on the request thread.
     """
     _ensure_calendar_schema()
     if not user_ids:
@@ -222,129 +262,132 @@ def build_week_events_for_users(user_ids, week_start, week_end, viewer_id=None):
 
     cid = app.config.get('GOOGLE_CLIENT_ID')
     csec = app.config.get('GOOGLE_CLIENT_SECRET')
-    if not cid or not csec:
-        return out
+    google_ready = bool(cid and csec)
 
     users = models.User.query.filter(models.User.id.in_(uid_set)).all()
     local_tz = _local_tzinfo()
     t_min, t_max = gcal.week_bounds_rfc3339_utc(week_start, week_end)
+    apple_t_min, apple_t_max = icloud.week_bounds_utc(week_start, week_end)
+
+    # Plain values only from here down — these lists are handed to worker threads.
+    google_jobs = []  # (user_id, refresh_token, cal_id, hide_titles)
+    apple_jobs = []   # (user_id, email, password, [(cal_id, hide_titles), ...])
 
     for user in users:
-        # Collect (refresh_token, [calendar_external_ids]) pairs, one per linked account
-        token_calendar_pairs = []
-
-        google_tokens = models.UserOAuthToken.query.filter_by(
-            user_id=user.id, provider='google'
-        ).all()
-
-        for oauth_tok in google_tokens:
-            if not oauth_tok.refresh_token:
-                continue
-            cal_rows = models.UserLinkedCalendar.query.filter_by(
-                user_id=user.id, provider='google',
-                oauth_token_id=oauth_tok.id, included_in_main_view=True
-            ).all()
-            cal_entries = [(r.external_id, bool(r.hide_event_titles)) for r in cal_rows]
-            if cal_entries:
-                token_calendar_pairs.append((oauth_tok.refresh_token, cal_entries))
-
-        # Legacy: calendars with no oauth_token_id → use user.google_refresh_token
-        if user.google_refresh_token:
-            legacy_rows = models.UserLinkedCalendar.query.filter_by(
-                user_id=user.id, provider='google', included_in_main_view=True
-            ).filter(models.UserLinkedCalendar.oauth_token_id.is_(None)).all()
-            legacy_entries = [(r.external_id, bool(r.hide_event_titles)) for r in legacy_rows]
-            if legacy_entries:
-                token_calendar_pairs.append((user.google_refresh_token, legacy_entries))
-
-        # If user has no linked calendars at all, fall back to "primary" using login token
-        if not token_calendar_pairs:
-            has_any = models.UserLinkedCalendar.query.filter_by(
+        if google_ready:
+            token_calendar_pairs = []
+            google_tokens = models.UserOAuthToken.query.filter_by(
                 user_id=user.id, provider='google'
-            ).first()
-            if not has_any:
-                login_tok = next(
-                    (t for t in google_tokens if t.is_login_account and t.refresh_token),
-                    None,
-                )
-                fallback_token = (
-                    (login_tok.refresh_token if login_tok else None)
-                    or user.google_refresh_token
-                )
-                if fallback_token:
-                    token_calendar_pairs.append((fallback_token, [('primary', False)]))
+            ).all()
 
-        for refresh_token, cal_entries in token_calendar_pairs:
-            try:
-                access = gcal.refresh_google_access_token(cid, csec, refresh_token)
-            except Exception:
-                app.logger.warning(
-                    'Google token refresh failed for user %s', user.id, exc_info=True
-                )
-                continue
-            for cal_id, hide_titles in cal_entries:
-                try:
-                    raw = gcal.events_list_for_calendar(access, cal_id, t_min, t_max)
-                except Exception:
-                    app.logger.warning(
-                        'Google events.list failed user=%s calendar=%s', user.id, cal_id,
-                        exc_info=True,
-                    )
-                    continue
-                redact = hide_titles and user.id != viewer_id
-                for slot in gcal.google_events_to_week_slots(raw, week_start, week_end, local_tz):
-                    out.append({
-                        'day': slot['day'],
-                        'start': slot['start'],
-                        'end': slot['end'],
-                        'person': user.id,
-                        'title': 'Busy' if redact else slot['title'],
-                    })
-
-        # ---- iCloud (CalDAV) ----
-        apple_tokens = models.UserOAuthToken.query.filter_by(
-            user_id=user.id, provider='apple'
-        ).all()
-        if apple_tokens:
-            apple_t_min, apple_t_max = icloud.week_bounds_utc(week_start, week_end)
-            for oauth_tok in apple_tokens:
+            for oauth_tok in google_tokens:
                 if not oauth_tok.refresh_token:
                     continue
                 cal_rows = models.UserLinkedCalendar.query.filter_by(
-                    user_id=user.id, provider='apple',
-                    oauth_token_id=oauth_tok.id, included_in_main_view=True,
+                    user_id=user.id, provider='google',
+                    oauth_token_id=oauth_tok.id, included_in_main_view=True
                 ).all()
-                if not cal_rows:
-                    continue
-                try:
-                    client = icloud.make_client(oauth_tok.email, oauth_tok.refresh_token)
-                except Exception:
-                    app.logger.warning(
-                        'iCloud client init failed user=%s', user.id, exc_info=True
+                cal_entries = [(r.external_id, bool(r.hide_event_titles)) for r in cal_rows]
+                if cal_entries:
+                    token_calendar_pairs.append((oauth_tok.refresh_token, cal_entries))
+
+            if user.google_refresh_token:
+                legacy_rows = models.UserLinkedCalendar.query.filter_by(
+                    user_id=user.id, provider='google', included_in_main_view=True
+                ).filter(models.UserLinkedCalendar.oauth_token_id.is_(None)).all()
+                legacy_entries = [(r.external_id, bool(r.hide_event_titles)) for r in legacy_rows]
+                if legacy_entries:
+                    token_calendar_pairs.append((user.google_refresh_token, legacy_entries))
+
+            if not token_calendar_pairs:
+                has_any = models.UserLinkedCalendar.query.filter_by(
+                    user_id=user.id, provider='google'
+                ).first()
+                if not has_any:
+                    login_tok = next(
+                        (t for t in google_tokens if t.is_login_account and t.refresh_token),
+                        None,
                     )
-                    continue
-                for row in cal_rows:
-                    try:
-                        events = icloud.events_list_for_calendar(
-                            client, row.external_id, apple_t_min, apple_t_max
-                        )
-                    except Exception:
-                        app.logger.warning(
-                            'iCloud events fetch failed user=%s calendar=%s',
-                            user.id, row.external_id, exc_info=True,
-                        )
-                        continue
-                    redact = bool(row.hide_event_titles) and user.id != viewer_id
-                    for slot in icloud.icloud_events_to_week_slots(
-                        events, week_start, week_end, local_tz
-                    ):
-                        out.append({
-                            'day': slot['day'],
-                            'start': slot['start'],
-                            'end': slot['end'],
-                            'person': user.id,
-                            'title': 'Busy' if redact else slot['title'],
-                        })
+                    fallback_token = (
+                        (login_tok.refresh_token if login_tok else None)
+                        or user.google_refresh_token
+                    )
+                    if fallback_token:
+                        token_calendar_pairs.append((fallback_token, [('primary', False)]))
+
+            for refresh_token, cal_entries in token_calendar_pairs:
+                for cal_id, hide_titles in cal_entries:
+                    google_jobs.append((user.id, refresh_token, cal_id, hide_titles))
+
+        apple_tokens = models.UserOAuthToken.query.filter_by(
+            user_id=user.id, provider='apple'
+        ).all()
+        for oauth_tok in apple_tokens:
+            if not oauth_tok.refresh_token:
+                continue
+            cal_rows = models.UserLinkedCalendar.query.filter_by(
+                user_id=user.id, provider='apple',
+                oauth_token_id=oauth_tok.id, included_in_main_view=True,
+            ).all()
+            cal_entries = [(r.external_id, bool(r.hide_event_titles)) for r in cal_rows]
+            if cal_entries:
+                apple_jobs.append((
+                    user.id, oauth_tok.email, oauth_tok.refresh_token, cal_entries
+                ))
+
+    if not google_jobs and not apple_jobs:
+        return out
+
+    unique_tokens = list({token for _, token, _, _ in google_jobs})
+    worker_count = min(
+        _PROVIDER_FETCH_WORKERS,
+        max(1, len(unique_tokens) + len(google_jobs) + len(apple_jobs)),
+    )
+    access_by_token = {}
+    with ThreadPoolExecutor(max_workers=worker_count) as pool:
+        token_futs = {
+            pool.submit(_refresh_google_token, cid, csec, tok): tok
+            for tok in unique_tokens
+        }
+        apple_futs = [
+            (
+                pool.submit(
+                    _fetch_apple_slots,
+                    email, password, calendars,
+                    apple_t_min, apple_t_max, week_start, week_end, local_tz, user_id,
+                ),
+                user_id,
+            )
+            for user_id, email, password, calendars in apple_jobs
+        ]
+        for fut, tok in token_futs.items():
+            access = fut.result()
+            if access:
+                access_by_token[tok] = access
+
+        google_futs = []
+        for user_id, refresh_token, cal_id, hide_titles in google_jobs:
+            access = access_by_token.get(refresh_token)
+            if not access:
+                continue
+            google_futs.append((
+                pool.submit(
+                    _fetch_google_slots,
+                    access, cal_id, t_min, t_max, week_start, week_end, local_tz, user_id,
+                ),
+                user_id,
+                hide_titles,
+            ))
+
+        for fut, user_id, hide_titles in google_futs:
+            redact = hide_titles and user_id != viewer_id
+            for slot in fut.result():
+                out.append(_event_slot(slot, user_id, redact))
+        for fut, user_id in apple_futs:
+            for hide_titles, slots in fut.result():
+                redact = hide_titles and user_id != viewer_id
+                for slot in slots:
+                    out.append(_event_slot(slot, user_id, redact))
     return out
 
 
@@ -461,8 +504,7 @@ def index():
     if not current_user.is_authenticated:
         return redirect("/login")
 
-    # Get related users (friends + group members)
-    all_related_user_ids, friends_ids, groups_data = get_related_user_ids(current_user.id)
+    all_related_user_ids, groups_data = get_related_user_ids(current_user.id)
 
     # Fetch user info for everyone involved
     related_users = models.User.query.filter(models.User.id.in_(all_related_user_ids)).all()
@@ -489,7 +531,6 @@ def index():
         'calendar.html',
         people=people_map,
         events=events_data,
-        friends_ids=friends_ids,
         groups=groups_data,
         current_user_id=current_user.id,
         active_page='calendar'
@@ -518,8 +559,7 @@ def get_events():
     
     week_end = week_start + timedelta(days=7)
     
-    # Get all related user IDs using helper function
-    all_related_user_ids, _, _ = get_related_user_ids(current_user.id)
+    all_related_user_ids, _ = get_related_user_ids(current_user.id)
     
     events_data = build_week_events_for_users(
         all_related_user_ids, week_start, week_end, viewer_id=current_user.id
@@ -879,141 +919,6 @@ def remove_class(section_id):
 
 
 # ----- Routes: SOCIAL -----
-@app.route('/friends', methods=['GET', 'POST'])
-@login_required
-def friends():
-    if request.method == 'POST':
-        # Add Friend Logic: by @handle, or by user id (e.g. from group member list)
-        friend_user_id = request.form.get("friend_user_id", type=int)
-        handle = (request.form.get("handle") or request.form.get("username") or "").strip().lstrip("@")
-
-        if not friend_user_id and not handle:
-            flash("Please enter a handle.", "danger")
-            return redirect(url_for("friends"))
-
-        if friend_user_id:
-            target_user = models.User.query.get(friend_user_id)
-        else:
-            target_user = models.User.query.filter_by(username=handle).first()
-
-        if not target_user:
-            flash("User not found.", "danger")
-            return redirect(url_for("friends"))
-
-        if not target_user.username:
-            flash("That account has not finished setup yet.", "danger")
-            return redirect(url_for("friends"))
-
-        if target_user.id == current_user.id:
-            flash("You cannot add yourself.", "danger")
-            return redirect(url_for("friends"))
-
-        # Check existing friendship
-        existing = models.Friendship.query.filter(
-            or_(
-                (models.Friendship.requester_id == current_user.id) & (models.Friendship.receiver_id == target_user.id),
-                (models.Friendship.requester_id == target_user.id) & (models.Friendship.receiver_id == current_user.id)
-            )
-        ).first()
-
-        if existing:
-            if existing.status == 'accepted':
-                flash("You are already friends!", "info")
-            elif existing.requester_id == current_user.id:
-                flash("Request already sent.", "info")
-            else:
-                flash("They already sent you a request. Check your pending requests!", "info")
-            return redirect(url_for("friends"))
-
-        # Create request
-        req = models.Friendship(requester_id=current_user.id, receiver_id=target_user.id)
-        try:
-            db.session.add(req)
-            db.session.commit()
-            flash(f"Friend request sent to @{target_user.username}!", "success")
-        except Exception as e:
-            db.session.rollback()
-            flash("An error occurred while sending the friend request.", "danger")
-        
-        return redirect(url_for("friends"))
-
-    # GET: List friends and requests
-    # 1. Incoming Requests
-    incoming_requests = models.Friendship.query.filter_by(
-        receiver_id=current_user.id, 
-        status='pending'
-    ).all()
-
-    # 2. Friends (Accepted, either direction)
-    accepted_links = models.Friendship.query.filter(
-        (models.Friendship.status == 'accepted') &
-        or_(
-            models.Friendship.requester_id == current_user.id,
-            models.Friendship.receiver_id == current_user.id
-        )
-    ).all()
-    
-    friends_list = []
-    for link in accepted_links:
-        friend_user = link.receiver if link.requester_id == current_user.id else link.requester
-        # Calculate days as friends
-        days_as_friends = (datetime.utcnow() - link.created_at).days
-        friends_list.append({
-            'user': friend_user,
-            'friendship': link,
-            'days': days_as_friends
-        })
-
-    return render_template("friends.html", requests=incoming_requests, friends=friends_list, active_page='friends')
-
-
-@app.route('/friends/remove/<int:friend_id>', methods=['POST'])
-@login_required
-def remove_friend(friend_id):
-    # Find existing friendship
-    friendship = models.Friendship.query.filter(
-        or_(
-            (models.Friendship.requester_id == current_user.id) & (models.Friendship.receiver_id == friend_id),
-            (models.Friendship.requester_id == friend_id) & (models.Friendship.receiver_id == current_user.id)
-        )
-    ).first_or_404()
-    
-    try:
-        db.session.delete(friendship)
-        db.session.commit()
-        flash("Friend removed.", "info")
-    except Exception as e:
-        db.session.rollback()
-        flash("An error occurred while removing the friend.", "danger")
-    
-    return redirect(url_for("friends"))
-
-
-@app.route('/friends/respond/<int:request_id>/<action>')
-@login_required
-def friend_respond(request_id, action):
-    req = models.Friendship.query.get_or_404(request_id)
-    
-    if req.receiver_id != current_user.id:
-        flash("Unauthorized action.", "danger")
-        return redirect(url_for("friends"))
-
-    try:
-        if action == 'accept':
-            req.status = 'accepted'
-            db.session.commit()
-            flash(f"You are now friends with @{req.requester.username}!", "success")
-        elif action == 'decline':
-            db.session.delete(req)
-            db.session.commit()
-            flash("Friend request declined.", "info")
-    except Exception as e:
-        db.session.rollback()
-        flash("An error occurred while processing the request.", "danger")
-    
-    return redirect(url_for("friends"))
-
-
 @app.route('/groups', methods=['GET', 'POST'])
 @login_required
 def groups():
@@ -1353,32 +1258,7 @@ def view_group(group_id):
         flash("You have a pending invite to this group. Please accept or decline.", "info")
         return redirect(url_for("groups"))
     
-    # Context Logic
     is_admin = (member.role == 'admin')
-    
-    # Get my friends to check status
-    friends_query = models.Friendship.query.filter(
-        (models.Friendship.status == 'accepted') &
-        or_(
-            models.Friendship.requester_id == current_user.id,
-            models.Friendship.receiver_id == current_user.id
-        )
-    ).all()
-    friend_ids = set()
-    for f in friends_query:
-        if f.requester_id == current_user.id:
-            friend_ids.add(f.receiver_id)
-        else:
-            friend_ids.add(f.requester_id)
-
-    # Check pending sent requests to avoid showing "Add Friend" if already sent
-    pending_ids = set()
-    pending_query = models.Friendship.query.filter(
-        (models.Friendship.requester_id == current_user.id) & 
-        (models.Friendship.status == 'pending')
-    ).all()
-    for f in pending_query:
-        pending_ids.add(f.receiver_id)
 
     # Sort members by seniority (earliest joined first) - only accepted members
     accepted_members = [m for m in group.members if m.status == 'accepted']
@@ -1392,8 +1272,6 @@ def view_group(group_id):
         group=group, 
         membership=member,
         is_admin=is_admin,
-        friend_ids=friend_ids,
-        pending_ids=pending_ids,
         sorted_members=sorted_members,
         pending_invites=pending_invites,
         active_page='groups'

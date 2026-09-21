@@ -6,7 +6,7 @@
 
 ## Product intent
 
-This app helps **you, friends, and a small business** see **one combined weekly view** of availability so you can plan together.
+This app helps **you and the people in your groups** see **one combined weekly view** of availability so you can plan together.
 
 ### Target direction (not necessarily implemented yet)
 
@@ -31,11 +31,11 @@ This app helps **you, friends, and a small business** see **one combined weekly 
 | **Multiple calendar accounts** (`/calendar-settings`) | **DONE** | A user can connect multiple Google accounts. Each connection stores a `UserOAuthToken` row. `UserLinkedCalendar` rows are scoped to the owning token. |
 | **iCloud calendar integration** | **DONE** | Connect via CalDAV at `https://caldav.icloud.com/` using an app-specific password (`UserOAuthToken` with `provider='apple'`, credential stored in `refresh_token`). Uses the `caldav` Python library; read-only. Implemented in [`extras/icloud_calendar.py`](extras/icloud_calendar.py). |
 | **Outlook / Microsoft Graph integration** | LATER | Microsoft OAuth + Graph API for `/me/calendars` and `/me/calendarview`. Slot in as a third `provider='microsoft'` analog to the Google flow. |
-| **Performance / caching** | IN PROGRESS | Google fetches still take several seconds per week. Client UX fix is **DONE**: on every week-nav, `fetchWeekEvents` immediately blanks `window.ALL_EVENTS` and re-renders so stale events disappear instantly; a monotonic `fetchToken` discards stale responses if the user clicks again mid-fetch; the API date is formatted in **local time** (not UTC) so users east of UTC don't get the previous day's `week_start`; the fetch uses `cache: 'no-store'`. The active container also gets a `.is-loading` class while the request is in flight. **Still LATER**: per-week client-side `weekStart -> events[]` cache + background neighbor prefetch (the foundation that will also drive the monthly view), and the longer-term server-side `(user_id, week_start)` cache with a ~5-min TTL. |
+| **Performance / caching** | IN PROGRESS | Provider fetches for a week run in parallel (`ThreadPoolExecutor` in `build_week_events_for_users`: one Google token refresh per distinct refresh token, then `events.list` / CalDAV searches concurrently). The client keeps a `weekStart -> events[]` map, seeded from the first HTML payload. Revisiting a cached week paints immediately and does not blank the grid. After a week lands, the previous and next weeks prefetch in the background. A monotonic `fetchToken` still drops a slow response if the user navigates again. The API date is formatted in **local time**. A cache miss still blanks the grid and adds `.is-loading` while that week fetches. **Still LATER**: server-side `(viewer_id, week_start)` cache with a ~5-min TTL (must stay per viewer because titles are redacted per viewer). |
 | **Mobile weekly view** | **DONE** | On viewports `<=767px` the grid becomes a 3-day rolling window driven by `CFG.mobileDayOffset` and a `.day.mobile-visible` class. Horizontal swipe on `#days` shifts the window by ±1 day; running off either end (offset `<0` or `>4`) auto-advances the week. The header collapses into a sticky **`mobile-context-strip`** (prev / date+status / next / gear) populated by `window.updateMobileContextHeader()`; the right sidebar becomes a slide-up settings sheet behind the gear button, with a backdrop, grab handle, and swipe-down-to-close. Tooltips become tap-to-pin and render as a bottom strip on touch. Sidebar nav labels are hidden on mobile (icon-only); the "Coming soon" placeholder is hidden too. `html, body { height: 100dvh; overflow: hidden }` prevents the calendar from spilling below the viewport. |
 | **Weekly view defaults** | PARTIAL | **DONE**: weekends (Sat/Sun) are **always** shown — the Sat/Sun toggle and its CSS/JS hooks have been removed; the week is always Mon–Sun on both viewports. The "today" highlight is now a thin colored top border via a `.day.is-today::before` pseudo-element (no full-column tint, no extra padding on the day-label so the canvas stays aligned with the time column). **LATER**: column-gap tuning if still desired. |
 | **Monthly view** | PLANNED | Design decisions captured (see `.cursor/plans/`): single page with a `Week / Month` toggle (no reload, shared client cache); each day cell shows stacked color bars per visible person (length = fraction of their visible-day window they're busy), capped at 6 + "+N" pill; click a day cell jumps to weekly view at that day's Monday; on narrow viewports each cell collapses to day number + one combined busy bar. View preference persists in `localStorage`. Implementation depends on the per-week cache (see Performance / caching above). |
-| **Add calendar items + SMS invite** | LATER | Allow a user to create an event (title, date/time, invitees from friends/groups) and send an email-to-SMS gateway message asking each invitee to add it. Open questions: which SMS gateway(s)? opt-in / phone number collection flow? does the event write back to Google Calendar or stay app-local? |
+| **Add calendar items + SMS invite** | LATER | Allow a user to create an event (title, date/time, invitees from groups) and send an email-to-SMS gateway message asking each invitee to add it. Open questions: which SMS gateway(s)? opt-in / phone number collection flow? does the event write back to Google Calendar or stay app-local? |
 
 ---
 
@@ -68,7 +68,7 @@ This app helps **you, friends, and a small business** see **one combined weekly 
 | Per-user calendar accounts (sync, visibility, multi-account) | `templates/calendar_settings.html` (`/calendar-settings`) |
 | Auth UI | `templates/login.html` (Google sign-in only), `templates/onboarding.html` (`/complete-profile` — choose @handle, names) |
 | Profile | `templates/me.html` |
-| Friends / groups | `templates/friends.html`, `templates/groups.html`, `templates/group_detail.html` |
+| Groups | `templates/groups.html`, `templates/group_detail.html` |
 | Legacy class UI | `templates/classes.html` |
 | ASU debug HTML | `templates/api.html` |
 | Calendar JS / CSS | `static/js/calendar.js`, `static/css/calendar.css`, `static/css/shared.css` |
@@ -89,28 +89,31 @@ This app helps **you, friends, and a small business** see **one combined weekly 
 - **Google add-account flow**: `GET /auth/google/add-account` (requires `@login_required`) sets `session['oauth_mode'] = 'add_account'`, then redirects to Google OAuth with `prompt='select_account consent'`. The callback upserts a `UserOAuthToken` row (keyed on `provider_account_id`) without altering `users.google_sub` or `users.email`. The `_ONBOARDING_ALLOWED_ENDPOINTS` set includes `add_google_account` so partially-onboarded users can still reach it. Triggered from `templates/calendar_settings.html` by the "+ Add another Google account" link.
 - **iCloud add-account flow**: Apple does **not** offer OAuth for calendar API access. To connect, the user generates an app-specific password at appleid.apple.com (requires 2FA), then submits Apple ID + that password to the `add_apple_account` POST action on `/calendar-settings`. The server validates with `icloud.validate_credentials` (a CalDAV `principal()` call), stores the credential in `UserOAuthToken`, and immediately calls `sync_apple_calendar_list_rows` so calendars appear without a second click. The form is hidden behind a collapsible `<details class="cal-settings-connect-disclosure">` "+ Connect iCloud account" disclosure in the template (mirrors the Google button visually; no JS needed). Read-only access via the `caldav` library.
 - **Account disconnect**: the `disconnect_account` POST action on `/calendar-settings` is provider-agnostic (matches any `UserOAuthToken` by `id`+`user_id`) and refuses to delete a token with `is_login_account=True`. Cascade deletes the `UserLinkedCalendar` rows tied to that token.
-- **Onboarding gate**: `@app.before_request` function **`_redirect_incomplete_profile`** sends logged-in users with **`username is None`** to **`/complete-profile`** only (plus allowed endpoints: Google auth, add-account, logout, static). Until they submit onboarding, other routes (calendar, friends, API, etc.) are unreachable.
+- **Onboarding gate**: `@app.before_request` function **`_redirect_incomplete_profile`** sends logged-in users with **`username is None`** to **`/complete-profile`** only (plus allowed endpoints: Google auth, add-account, logout, static). Until they submit onboarding, other routes (calendar, groups, API, etc.) are unreachable.
 - **`GET /login`**: "Continue with Google" (or a notice if OAuth env is missing). **`GET /register`**: **302 to `login`**. **`/logout`**: `logout_user` (allowed during incomplete onboarding).
 
 ### Social discovery (handles)
 
-- **Friends** (`POST /friends`): resolve the target by **`handle`** form field (or legacy field name **`username`** for the same value) **or** by hidden **`friend_user_id`** (used from **`templates/group_detail.html`** "Add friend" to avoid typing handles).
 - **Group invites** (`POST /groups/invite/<id>`): form field **`handle`** (backwards-compatible with **`username`** in `app.py`). Display and flash copy refer to **@handle**; the DB column remains **`users.username`**.
 
 ### Social graph
 
-- **`Friendship`**: `requester_id`, `receiver_id`, `status` (`pending` | `accepted`), unique pair constraint.
-- **`Group` / `GroupMember`**: creator, `role` (`admin` | `member`), `status` (`pending` | `accepted`), `display_order` for ordering in UI.
+- **`Group` / `GroupMember`**: creator, `role` (`admin` | `member`), `status` (`pending` | `accepted`), `display_order` for ordering in UI. There is no friends graph. A person who is not in a group with you does not appear on your calendar.
 
 ### Who appears on the calendar
 
 `get_related_user_ids(user_id)` in `app.py` returns:
 
-1. The user themselves  
-2. All users with an **accepted** friendship (either direction)  
-3. All users who are **accepted members** of any **group** the user is an **accepted** member of  
+1. The user themselves
+2. All users who are **accepted members** of any **group** the user is an **accepted** member of
 
-Same logic feeds the home calendar and `/api/events`.
+Same logic feeds the home calendar and `/api/events`. The server still loads that full set for the week. The client draws **one set at a time**, stored in `localStorage` key `calendarView`:
+
+- **Just you**
+- **One group** (you and every accepted member)
+- **You and one member** of that group
+
+A missing saved group or member falls back to just you.
 
 ### Schedule data (today)
 
@@ -136,9 +139,10 @@ There is **no** generic "custom event" path outside Google + this class-derived 
 Each event in the API response should match what `app.py` currently emits:
 
 - **`day`**: integer weekday, **0 = Monday … 6 = Sunday** (Python `date.weekday()`).
-- **`start`**, **`end`**: strings `"HH:MM"` (24h from `strftime`).
+- **`start`**, **`end`**: strings `"HH:MM"` (24h from `strftime`). All-day events still carry the work-window bounds (`08:00`–`20:00`) plus `all_day`.
 - **`person`**: integer `user_id`.
 - **`title`**: string.
+- **`all_day`**: `true` on all-day Google and iCloud events only. Omitted on timed events. The week grid draws these in a strip above the canvas and does not paint them into the hourly gradient. Intensity on the canvas counts **distinct people** per minute, so two overlapping events from one person stay one shade.
 
 `static/js/calendar.js` builds busy gradients from this shape. If the backend changes shape or semantics, update the JS and this document together.
 
@@ -150,7 +154,7 @@ Each event in the API response should match what `app.py` currently emits:
 - `window.calendarNav.{prev,next,today}`: viewport-aware navigation entry points used by both the desktop sidebar buttons and the mobile context strip. On desktop these jump by a full week; on mobile `prev`/`next` shift the 3-day window by one day and auto-advance the week at the edges.
 - `window.updateMobileContextHeader()`: refreshes the date label inside `mobile-context-strip` after any nav.
 - `window.hideCalendarTooltip()`: call before any view change to dismiss a tap-pinned mobile tooltip so it can't display stale content for a different week/day.
-- `fetchWeekEvents()` is race-safe via a monotonic `fetchToken`; stale in-flight responses are dropped if the user navigates again before they resolve.
+- `fetchWeekEvents()` is race-safe via a monotonic `fetchToken`; stale in-flight responses are dropped if the user navigates again before they resolve. A per-week cache makes a week already loaded this session instant, and prefetches the neighboring weeks.
 
 ### User colors
 
@@ -164,7 +168,6 @@ Each event in the API response should match what `app.py` currently emits:
 flowchart LR
   subgraph social [Social graph]
     User
-    Friendship
     GroupMember
   end
   subgraph aggregate [Aggregation]
@@ -180,9 +183,7 @@ flowchart LR
     UserOAuthToken
     UserLinkedCalendar
   end
-  User --> Friendship
   User --> GroupMember
-  Friendship --> getRelated
   GroupMember --> getRelated
   getRelated --> routes
   routes --> EventTable

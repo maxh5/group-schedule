@@ -90,6 +90,7 @@ CFG.days.forEach((d, idx) => {
   dayEl.setAttribute('data-day', idx);
   dayEl.innerHTML = `
     <div class="day-label">${d}</div>
+    <div class="day-all-day" data-day="${idx}" aria-label="${d} all-day events"></div>
     <canvas id="canvas-${idx}" width="${CFG.dayWidth}" height="${CFG.canvasHeightPx}" aria-label="${d} availability canvas"></canvas>
   `;
   daysEl.appendChild(dayEl);
@@ -159,8 +160,9 @@ let peopleById = {};
 let eventsByDay = {};
 
 /* Canvas draw: for each day draw a smooth vertical gradient
-   where intensity = number of concurrent events (people busy)
-   If "Me" filter is active, use blue for user and green for others
+   where intensity = number of distinct people busy that minute.
+   The current user is blue; everyone else is green.
+   All-day events are drawn in the strip above the canvas, not here.
 */
 function drawDayGradient(dayIndex){
   const canvas = document.getElementById(`canvas-${dayIndex}`);
@@ -175,40 +177,46 @@ function drawDayGradient(dayIndex){
   const endMin = CFG.workEndHour * 60;
   const totalMins = endMin - startMin;
 
-  // Check if "Me" filter is active
-  const showMe = document.getElementById('filter-me')?.checked || false;
-
   // Get visible user IDs from global state
   const visibleIds = window.VISIBLE_USER_IDS || new Set();
 
-  // Track counts separately for user vs others when "Me" is active
-  const userCounts = new Uint8Array(totalMins);
-  const otherCounts = new Uint8Array(totalMins);
+  // One entry per person per minute, so two overlapping items of yours stay one shade.
+  const userPeople = Array.from({length: totalMins}, () => new Set());
+  const otherPeople = Array.from({length: totalMins}, () => new Set());
   const perMinutePeople = Array.from({length: totalMins}, () => []); // who is busy that minute
 
   const dayEvents = eventsByDay[dayIndex] || [];
   for(const e of dayEvents){
+    if (e.allDay) continue;
     // Only process events for visible users
     if (!visibleIds.has(e.person)) continue;
     
     // Clip to workday
     const s = Math.max(e.startMin, startMin);
     const t = Math.min(e.endMin, endMin);
-    const isUser = showMe && window.CURRENT_USER_ID && e.person === window.CURRENT_USER_ID;
+    if (s >= t) continue;
+    const isUser = window.CURRENT_USER_ID && e.person === window.CURRENT_USER_ID;
     
     for(let m = s; m < t; m++){
       const idx = m - startMin;
+      if (idx < 0 || idx >= totalMins) continue;
       if (isUser) {
-        userCounts[idx] = userCounts[idx] + 1;
+        userPeople[idx].add(e.person);
       } else {
-        otherCounts[idx] = otherCounts[idx] + 1;
+        otherPeople[idx].add(e.person);
       }
       perMinutePeople[idx].push({ personId: e.person, event: e });
     }
   }
 
-  // Determine max concurrent count for the entire day (combining user and others)
-  // This ensures all events scale relative to the day's busiest moment
+  const userCounts = new Uint8Array(totalMins);
+  const otherCounts = new Uint8Array(totalMins);
+  for(let i = 0; i < totalMins; i++) {
+    userCounts[i] = userPeople[i].size;
+    otherCounts[i] = otherPeople[i].size;
+  }
+
+  // Peak distinct-people count scales every minute on this day.
   const combinedCounts = new Uint8Array(totalMins);
   for(let i = 0; i < totalMins; i++) {
     combinedCounts[i] = userCounts[i] + otherCounts[i];
@@ -225,7 +233,7 @@ function drawDayGradient(dayIndex){
     // Apply a softer easing curve for more gradual tapering
     const t = Math.pow(combinedIntensity, 0.7);
     
-    if (showMe && userC > 0) {
+    if (userC > 0) {
       // User is busy - always show blue (even if others are also busy)
       const r = Math.round(240 + (30 - 240) * t);  // Light blue to deep blue
       const g = Math.round(248 + (144 - 248) * t);
@@ -233,7 +241,7 @@ function drawDayGradient(dayIndex){
       const a = Math.round(40 + (180 - 40) * t);
       return [r,g,b,a];
     } else {
-      // Only others busy (or Me not active) - green gradient
+      // Only others busy - green gradient
       const r = Math.round(240 + (0 - 240) * t);
       const g = Math.round(255 + (100 - 255) * t);
       const b = Math.round(240 + (0 - 240) * t);
@@ -475,6 +483,41 @@ document.querySelectorAll('canvas').forEach((c, idx) => {
   c.addEventListener('blur', hideTooltip);
 });
 
+/* All-day events sit in a one-line strip. Every column keeps the strip when
+   the week has any, so the canvases stay aligned with the time gutter. */
+function renderAllDayStrips() {
+  const visibleIds = window.VISIBLE_USER_IDS || new Set();
+  const strips = document.querySelectorAll('.day-all-day');
+  let any = false;
+  strips.forEach((el, dayIndex) => {
+    const items = (eventsByDay[dayIndex] || []).filter(e => e.allDay && visibleIds.has(e.person));
+    if (items.length) any = true;
+    el.replaceChildren();
+    const shown = items.slice(0, 2);
+    shown.forEach(ev => {
+      const pill = document.createElement('div');
+      pill.className = 'day-all-day-pill';
+      const person = peopleById[ev.person];
+      pill.style.background = (person && person.color) || '#cbd5e1';
+      pill.textContent = ev.title || 'Busy';
+      pill.title = `${person ? person.name : 'Busy'}: ${ev.title || 'Busy'}`;
+      el.appendChild(pill);
+    });
+    if (items.length > shown.length) {
+      const more = document.createElement('div');
+      more.className = 'day-all-day-pill day-all-day-more';
+      more.textContent = `+${items.length - shown.length}`;
+      more.title = items.slice(shown.length).map(ev => ev.title || 'Busy').join('\n');
+      el.appendChild(more);
+    }
+  });
+  const daysEl = document.getElementById('days');
+  if (daysEl) daysEl.classList.toggle('has-all-day', any);
+  if (typeof window.fitCalendarCanvases === 'function') {
+    requestAnimationFrame(() => window.fitCalendarCanvases());
+  }
+}
+
 /* Expose a small imperative API to update events from server */
 function redraw(newEvents, people){
   // Update global config
@@ -494,9 +537,11 @@ function redraw(newEvents, people){
         startMin: hhmmToMinutes(ev.start),
         endMin: hhmmToMinutes(ev.end),
         person: ev.person,
-        title: ev.title
+        title: ev.title,
+        allDay: !!ev.all_day
       });
     });
+    renderAllDayStrips();
     // redraw canvases
     for(let d=0; d<CFG.days.length; d++){
       perDayMinuteMaps[d] = drawDayGradient(d);
@@ -627,40 +672,73 @@ function init() {
   // (slower) fetch can't clobber the result of a newer one.
   let fetchToken = 0;
 
+  // Weeks already loaded this session. A hit paints immediately and does not
+  // blank the grid. Neighbor weeks are filled in the background.
+  const weekCache = new Map();
+  const weekLoads = new Map();
+
+  function mondayOffset(dateStr, deltaWeeks) {
+    const d = new Date(`${dateStr}T12:00:00`);
+    d.setDate(d.getDate() + deltaWeeks * 7);
+    return formatLocalDate(d);
+  }
+
+  function loadWeek(dateStr) {
+    if (weekCache.has(dateStr)) return Promise.resolve(weekCache.get(dateStr));
+    const existing = weekLoads.get(dateStr);
+    if (existing) return existing;
+    const pending = fetch(`/api/events?week_start=${dateStr}`, { cache: 'no-store' })
+      .then(response => {
+        if (!response.ok) throw new Error(response.statusText || 'Failed to fetch events');
+        return response.json();
+      })
+      .then(data => {
+        const events = Array.isArray(data && data.events) ? data.events : [];
+        weekCache.set(dateStr, events);
+        return events;
+      })
+      .finally(() => {
+        weekLoads.delete(dateStr);
+      });
+    weekLoads.set(dateStr, pending);
+    return pending;
+  }
+
+  function prefetchNeighbors(dateStr) {
+    [-1, 1].forEach(delta => {
+      const key = mondayOffset(dateStr, delta);
+      if (weekCache.has(key) || weekLoads.has(key)) return;
+      loadWeek(key).catch(() => {});
+    });
+  }
+
   // Function to fetch events for the current week from the API
   async function fetchWeekEvents() {
     const dateStr = formatLocalDate(currentMonday);
     const myToken = ++fetchToken;
+    const weekEl = document.querySelector('.week');
 
-    // Immediately blank the current events so the user sees the previous week's
-    // items disappear. Google Calendar fetches can take multiple seconds, and
-    // without this the calendar appears stuck on the old week's events while
-    // only the day labels change.
+    if (weekCache.has(dateStr)) {
+      window.ALL_EVENTS = weekCache.get(dateStr);
+      if (typeof updateCalendar === 'function') updateCalendar();
+      if (weekEl) weekEl.classList.remove('is-loading');
+      prefetchNeighbors(dateStr);
+      return;
+    }
+
+    // Cache miss: clear the previous week so stale items don't sit under new labels.
     window.ALL_EVENTS = [];
     if (typeof updateCalendar === 'function') updateCalendar();
-
-    const weekEl = document.querySelector('.week');
     if (weekEl) weekEl.classList.add('is-loading');
 
     try {
-      const response = await fetch(`/api/events?week_start=${dateStr}`, { cache: 'no-store' });
-      if (!response.ok) {
-        console.error('Failed to fetch events:', response.statusText);
-        return;
-      }
-      const data = await response.json();
-
-      // Ignore stale responses: a newer navigation has already started.
+      const events = await loadWeek(dateStr);
       if (myToken !== fetchToken) return;
-
-      if (window.CalendarPrototype && Array.isArray(data && data.events)) {
-        window.ALL_EVENTS = data.events;
-        if (typeof updateCalendar === 'function') {
-          updateCalendar();
-        }
-      }
+      window.ALL_EVENTS = events;
+      if (typeof updateCalendar === 'function') updateCalendar();
+      prefetchNeighbors(dateStr);
     } catch (error) {
-      console.error('Error fetching week events:', error);
+      if (myToken === fetchToken) console.error('Error fetching week events:', error);
     } finally {
       if (myToken === fetchToken && weekEl) weekEl.classList.remove('is-loading');
     }
@@ -780,8 +858,13 @@ function init() {
     }
   });
 
-  // Initial Run
+  // Initial Run. Seed the cache from the HTML payload so this week is free to revisit.
   updateView();
+  weekCache.set(
+    formatLocalDate(currentMonday),
+    Array.isArray(window.ALL_EVENTS) ? window.ALL_EVENTS.slice() : []
+  );
+  prefetchNeighbors(formatLocalDate(currentMonday));
 })();
 
 /* =========================
@@ -901,6 +984,8 @@ function init() {
     };
   }
 
+  window.fitCalendarCanvases = fitToContainer;
+
   // Initial fit
   // Use timeout to ensure CSS layout is applied
   setTimeout(fitToContainer, 10);
@@ -937,6 +1022,8 @@ function updateCurrentStatus() {
   const todayEvents = (eventsByDay[dayIndex] || []).filter(e =>
     e.person === window.CURRENT_USER_ID
   );
+  const allDayEvent = todayEvents.find(e => e.allDay) || null;
+  const timedEvents = todayEvents.filter(e => !e.allDay);
 
   if (todayEvents.length === 0) {
     setStatus('Free for the day!', 'free');
@@ -946,7 +1033,7 @@ function updateCurrentStatus() {
   let currentEvent = null;
   let nextEvent = null;
 
-  for (const event of todayEvents) {
+  for (const event of timedEvents) {
     if (currentMinute >= event.startMin && currentMinute < event.endMin) {
       currentEvent = event;
       break;
@@ -963,6 +1050,8 @@ function updateCurrentStatus() {
     const mins = minutesLeft % 60;
     const timeStr = hours > 0 ? `${hours}h ${mins}m left` : `${mins}m left`;
     setStatus(`${currentEvent.title || 'Busy'} • ${timeStr}`, 'busy');
+  } else if (allDayEvent) {
+    setStatus(`${allDayEvent.title || 'Busy'} • all day`, 'busy');
   } else if (nextEvent) {
     const minutesUntil = nextEvent.startMin - currentMinute;
     const hours = Math.floor(minutesUntil / 60);
