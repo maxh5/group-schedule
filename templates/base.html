@@ -115,7 +115,10 @@
             localStorage.setItem('theme', 'light');
         }
         
-        // Update current time marker if on calendar page
+        // Calendar colors are painted for the active theme.
+        if (typeof updateCalendar === 'function') {
+            updateCalendar();
+        }
         if (window.updateCurrentTimeMarker) {
             window.updateCurrentTimeMarker();
         }

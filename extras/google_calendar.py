@@ -11,7 +11,8 @@ CALENDAR_LIST_URL = "https://www.googleapis.com/calendar/v3/users/me/calendarLis
 CALENDAR_META_URL = "https://www.googleapis.com/calendar/v3/calendars/{calendar_id}"
 EVENTS_LIST_URL = "https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events"
 
-# Match static/js/calendar.js work window for clipping
+# Placeholder bounds for all-day events. Timed events keep their real hours;
+# 8–8 is only the calendar's default visible window.
 WORK_START_HOUR = 8
 WORK_END_HOUR = 20
 
@@ -100,21 +101,22 @@ def _clip_interval_to_day_local(
     day: dt.date,
     start_local: dt.datetime,
     end_local: dt.datetime,
-) -> Optional[Tuple[dt.time, dt.time]]:
-    """Return (start_time, end_time) local wall times clipped to [day 00:00, day+1 00:00) and work hours."""
+) -> Optional[Tuple[str, str]]:
+    """Return HH:MM strings for the part of the event that falls on this local day.
+
+    An end exactly at the next midnight is ``24:00`` so it is not stored as 00:00.
+    Hours outside the default 8–8 view are kept; the client hides them until the
+    visible window includes them.
+    """
     day_start = dt.datetime.combine(day, dt.time.min, tzinfo=start_local.tzinfo)
     day_end = day_start + dt.timedelta(days=1)
     lo = max(start_local, day_start)
     hi = min(end_local, day_end)
     if hi <= lo:
         return None
-    work_lo = day_start.replace(hour=WORK_START_HOUR, minute=0, second=0, microsecond=0)
-    work_hi = day_start.replace(hour=WORK_END_HOUR, minute=0, second=0, microsecond=0)
-    lo2 = max(lo, work_lo)
-    hi2 = min(hi, work_hi)
-    if hi2 <= lo2:
-        return None
-    return lo2.time().replace(tzinfo=None), hi2.time().replace(tzinfo=None)
+    start_s = lo.strftime("%H:%M")
+    end_s = "24:00" if hi >= day_end else hi.strftime("%H:%M")
+    return start_s, end_s
 
 
 def events_list_for_calendar(
@@ -193,8 +195,8 @@ def google_events_to_week_slots(
                 out.append(
                     {
                         "day": d.weekday(),
-                        "start": st.strftime("%H:%M"),
-                        "end": et.strftime("%H:%M"),
+                        "start": st,
+                        "end": et,
                         "title": summary,
                     }
                 )

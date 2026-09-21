@@ -3,6 +3,8 @@ from flask_login import logout_user, login_required, login_user, current_user
 import os
 import re
 import secrets
+import threading
+import time
 from werkzeug.utils import secure_filename
 from dotenv import load_dotenv
 from sqlalchemy.exc import IntegrityError
@@ -199,24 +201,26 @@ def _refresh_google_token(cid, csec, refresh_token):
 
 
 def _fetch_google_slots(access, cal_id, t_min, t_max, week_start, week_end, local_tz, user_id):
+    """Return (slots, ok). ok is False when this calendar could not be read."""
     try:
         raw = gcal.events_list_for_calendar(access, cal_id, t_min, t_max)
-        return gcal.google_events_to_week_slots(raw, week_start, week_end, local_tz)
+        return gcal.google_events_to_week_slots(raw, week_start, week_end, local_tz), True
     except Exception:
         app.logger.warning(
             'Google events.list failed user=%s calendar=%s', user_id, cal_id, exc_info=True
         )
-        return []
+        return [], False
 
 
 def _fetch_apple_slots(email, password, calendars, t_min, t_max, week_start, week_end, local_tz, user_id):
-    """calendars is a list of (external_id, hide_titles). Returns [(hide_titles, slots), ...]."""
+    """Return ([(hide_titles, slots), ...], ok). ok is False if any calendar failed."""
     try:
         client = icloud.make_client(email, password)
     except Exception:
         app.logger.warning('iCloud client init failed user=%s', user_id, exc_info=True)
-        return []
+        return [], False
     results = []
+    ok = True
     for cal_id, hide_titles in calendars:
         try:
             events = icloud.events_list_for_calendar(client, cal_id, t_min, t_max)
@@ -225,9 +229,10 @@ def _fetch_apple_slots(email, password, calendars, t_min, t_max, week_start, wee
             app.logger.warning(
                 'iCloud events fetch failed user=%s calendar=%s', user_id, cal_id, exc_info=True
             )
+            ok = False
             continue
         results.append((hide_titles, slots))
-    return results
+    return results, ok
 
 
 def build_week_events_for_users(user_ids, week_start, week_end, viewer_id=None):
@@ -239,10 +244,13 @@ def build_week_events_for_users(user_ids, week_start, week_end, viewer_id=None):
     fall back to user.google_refresh_token.
 
     Provider HTTP runs on a thread pool. ORM access stays on the request thread.
+
+    Returns (events, complete). complete is False when a provider call failed,
+    so the caller can skip caching a partial week.
     """
     _ensure_calendar_schema()
     if not user_ids:
-        return []
+        return [], True
     uid_set = set(user_ids)
     out = []
 
@@ -336,9 +344,10 @@ def build_week_events_for_users(user_ids, week_start, week_end, viewer_id=None):
                 ))
 
     if not google_jobs and not apple_jobs:
-        return out
+        return out, True
 
     unique_tokens = list({token for _, token, _, _ in google_jobs})
+    complete = True
     worker_count = min(
         _PROVIDER_FETCH_WORKERS,
         max(1, len(unique_tokens) + len(google_jobs) + len(apple_jobs)),
@@ -369,6 +378,7 @@ def build_week_events_for_users(user_ids, week_start, week_end, viewer_id=None):
         for user_id, refresh_token, cal_id, hide_titles in google_jobs:
             access = access_by_token.get(refresh_token)
             if not access:
+                complete = False
                 continue
             google_futs.append((
                 pool.submit(
@@ -380,15 +390,21 @@ def build_week_events_for_users(user_ids, week_start, week_end, viewer_id=None):
             ))
 
         for fut, user_id, hide_titles in google_futs:
+            slots, ok = fut.result()
+            if not ok:
+                complete = False
             redact = hide_titles and user_id != viewer_id
-            for slot in fut.result():
+            for slot in slots:
                 out.append(_event_slot(slot, user_id, redact))
         for fut, user_id in apple_futs:
-            for hide_titles, slots in fut.result():
+            results, ok = fut.result()
+            if not ok:
+                complete = False
+            for hide_titles, slots in results:
                 redact = hide_titles and user_id != viewer_id
                 for slot in slots:
                     out.append(_event_slot(slot, user_id, redact))
-    return out
+    return out, complete
 
 
 
@@ -498,6 +514,48 @@ def _redirect_incomplete_profile():
         return redirect(url_for('complete_profile'))
 
 
+# Per-viewer week payloads. Titles are redacted for the viewer, so the key
+# cannot be shared across users. Repeat visits within the TTL skip Google.
+_WEEK_CACHE = {}
+_WEEK_CACHE_LOCK = threading.Lock()
+_WEEK_CACHE_TTL_SEC = 300
+
+
+def _week_cache_key(user_ids, week_start, viewer_id):
+    return (int(viewer_id or 0), week_start.isoformat(), tuple(sorted(user_ids)))
+
+
+def peek_week_events(user_ids, week_start, viewer_id):
+    """Return a cached week list, or None if this viewer must fetch."""
+    key = _week_cache_key(user_ids, week_start, viewer_id)
+    now = time.monotonic()
+    with _WEEK_CACHE_LOCK:
+        hit = _WEEK_CACHE.get(key)
+        if hit and hit[0] > now:
+            return hit[1]
+    return None
+
+
+def cached_week_events(user_ids, week_start, week_end, viewer_id):
+    cached = peek_week_events(user_ids, week_start, viewer_id)
+    if cached is not None:
+        return cached
+    events, complete = build_week_events_for_users(
+        user_ids, week_start, week_end, viewer_id=viewer_id
+    )
+    if not complete:
+        return events
+    key = _week_cache_key(user_ids, week_start, viewer_id)
+    with _WEEK_CACHE_LOCK:
+        _WEEK_CACHE[key] = (time.monotonic() + _WEEK_CACHE_TTL_SEC, events)
+        if len(_WEEK_CACHE) > 200:
+            now = time.monotonic()
+            expired = [k for k, (exp, _) in _WEEK_CACHE.items() if exp <= now]
+            for k in expired:
+                _WEEK_CACHE.pop(k, None)
+    return events
+
+
 # ----- Routes -----
 @app.route('/', methods=['GET'])
 def index():
@@ -523,14 +581,16 @@ def index():
     start_of_week = today - timedelta(days=today.weekday())
     end_of_week = start_of_week + timedelta(days=7)
 
-    events_data = build_week_events_for_users(
-        all_related_user_ids, start_of_week, end_of_week, viewer_id=current_user.id
-    )
+    # A warm cache is embedded so the grid paints with the page. A miss returns
+    # immediately and the client loads /api/events (which fills the cache).
+    cached_events = peek_week_events(all_related_user_ids, start_of_week, current_user.id)
+    events_included = cached_events is not None
 
     return render_template(
         'calendar.html',
         people=people_map,
-        events=events_data,
+        events=cached_events if events_included else [],
+        events_included=events_included,
         groups=groups_data,
         current_user_id=current_user.id,
         active_page='calendar'
@@ -561,10 +621,10 @@ def get_events():
     
     all_related_user_ids, _ = get_related_user_ids(current_user.id)
     
-    events_data = build_week_events_for_users(
+    events_data = cached_week_events(
         all_related_user_ids, week_start, week_end, viewer_id=current_user.id
     )
-    
+
     return jsonify({"events": events_data})
 
 

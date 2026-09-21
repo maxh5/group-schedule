@@ -723,11 +723,55 @@ button, input[type="submit"] {
 }
 
 .flash {
-    padding: 10px;
-    margin: 10px 0;
-    border-radius: 4px;
-    background: #fff3cd;
-    color: #856404;
+    display: flex;
+    align-items: center;
+    width: fit-content;
+    max-width: 100%;
+    padding: 8px 12px;
+    margin: 0 0 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    background: var(--card-bg);
+    color: var(--text-color);
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.4;
+}
+
+.flash-success {
+    background: #ecfdf5;
+    color: #065f46;
+    border-color: #a7f3d0;
+}
+
+.flash-danger {
+    background: #fef2f2;
+    color: #991b1b;
+    border-color: #fecaca;
+}
+
+.flash-info {
+    background: #eff6ff;
+    color: #1e40af;
+    border-color: #bfdbfe;
+}
+
+[data-theme="dark"] .flash-success {
+    background: rgba(6, 78, 59, 0.45);
+    color: #a7f3d0;
+    border-color: #065f46;
+}
+
+[data-theme="dark"] .flash-danger {
+    background: rgba(127, 29, 29, 0.5);
+    color: #fecaca;
+    border-color: #7f1d1d;
+}
+
+[data-theme="dark"] .flash-info {
+    background: rgba(30, 58, 138, 0.45);
+    color: #bfdbfe;
+    border-color: #1e3a8a;
 }
 
 h1, h2 {

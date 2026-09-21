@@ -60,6 +60,7 @@
   // Initialize with data from Flask
   const ALL_PEOPLE = {{ people | tojson }};
   window.ALL_EVENTS = {{ events | tojson }}; // Use window.ALL_EVENTS so it can be updated when week changes
+  window.EVENTS_INCLUDED = {{ events_included | tojson }};
   const GROUPS = {{ groups | tojson }};
   window.CURRENT_USER_ID = {{ current_user_id | tojson }}; // Make globally accessible for color differentiation
   const CURRENT_USER_ID = window.CURRENT_USER_ID; // Keep local reference for compatibility
@@ -238,8 +239,9 @@
       const minutesIntoWorkday = currentTimeInMinutes - workStartMin;
       const fraction = minutesIntoWorkday / totalWorkMinutes;
       
-      // Position calculation (matching calendar layout)
-      const HEADER_OFFSET = 38; // day-label height
+      // Same measurement the hour labels use, so the line stays on the canvas
+      // after the all-day strip changes the column header height.
+      const HEADER_OFFSET = (typeof getCanvasTopOffset === 'function') ? getCanvasTopOffset() : 38;
       const canvasHeight = window.CFG?.canvasHeightPx || 720;
       const topPosition = HEADER_OFFSET + (fraction * canvasHeight);
       

@@ -31,7 +31,7 @@
     --day-today-bg: rgba(96, 165, 250, 0.1);
     --day-today-border: #60a5fa;
     --day-today-label: #60a5fa;
-    --canvas-shadow: rgba(0,0,0,0.6);
+    --canvas-shadow: rgba(0,0,0,0.25);
     --tooltip-bg: linear-gradient(180deg, rgba(30, 41, 59, 0.98), rgba(15, 23, 42, 0.98));
     --tooltip-border: rgba(100, 116, 139, 0.3);
     --tooltip-text: #e2e8f0;
@@ -294,26 +294,22 @@
     transition: background 0.2s, border-color 0.2s;
   }
 
-  .day.is-today {
-    background: transparent;
-    border-color: transparent;
+  .day.is-today .day-label {
+    position: relative;
+    width: fit-content;
+    margin-left: auto;
+    margin-right: auto;
+    font-weight: 700;
   }
-  /* Subtle today indicator: a thin colored bar across the top of the column.
-     Rendered as ::before so it does not change the day-label height (which
-     would offset the canvas vs the time column gutter). */
-  .day.is-today::before {
+  .day.is-today .day-label::after {
     content: '';
     position: absolute;
-    top: 0;
-    left: 10px;
-    right: 10px;
-    height: 3px;
+    left: 0;
+    right: 0;
+    bottom: 1px;
+    height: 2px;
+    border-radius: 2px;
     background: var(--day-today-border);
-    border-radius: 0 0 2px 2px;
-  }
-  .day.is-today .day-label {
-    color: var(--day-today-label);
-    font-weight: 700;
   }
 
   .day-label{
@@ -353,15 +349,23 @@
     font-size: 11px;
     font-weight: 600;
     color: #111;
+    background: var(--pill, #cbd5e1);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  [data-theme="dark"] .day-all-day-pill {
+    background: color-mix(in srgb, var(--pill, #94a3b8) 32%, #1e293b);
+    color: #f8fafc;
+    box-shadow: inset 3px 0 0 var(--pill, #94a3b8);
   }
 
   .day-all-day-more {
     flex: 0 0 auto;
     background: var(--hover-bg);
     color: var(--text-color);
+    box-shadow: none;
   }
 
   .calendar-sets {

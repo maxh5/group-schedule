@@ -179,8 +179,8 @@ def icloud_events_to_week_slots(
             st, et = clipped
             out.append({
                 "day": d.weekday(),
-                "start": st.strftime("%H:%M"),
-                "end": et.strftime("%H:%M"),
+                "start": st,
+                "end": et,
                 "title": title,
             })
     return out

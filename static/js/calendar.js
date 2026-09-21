@@ -223,9 +223,15 @@ function drawDayGradient(dayIndex){
   }
   const maxCount = Math.max(1, ...combinedCounts);
 
-  // Color mapping: blue for user, green for others
+  const darkTheme = document.documentElement.getAttribute('data-theme') === 'dark';
+
+  // Color mapping: blue for user, green for others.
+  // Free minutes stay transparent in dark mode so they match the column
+  // instead of a light-green wash that reads as a gray band.
   function getColorForMinute(userC, otherC){
-    if (userC === 0 && otherC === 0) return [240,255,240,40]; // very light green background
+    if (userC === 0 && otherC === 0) {
+      return darkTheme ? [15, 23, 42, 0] : [240, 255, 240, 40];
+    }
     
     // Calculate combined count and intensity relative to the day's maximum
     const combinedC = userC + otherC;
@@ -272,7 +278,7 @@ function drawDayGradient(dayIndex){
 
   // Add subtle horizontal hour lines
   ctx.globalCompositeOperation = 'source-over';
-  ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+  ctx.strokeStyle = darkTheme ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.15)';
   ctx.lineWidth = 1.5;
   
   for(let hour = CFG.workStartHour; hour <= CFG.workEndHour; hour++){
@@ -493,12 +499,12 @@ function renderAllDayStrips() {
     const items = (eventsByDay[dayIndex] || []).filter(e => e.allDay && visibleIds.has(e.person));
     if (items.length) any = true;
     el.replaceChildren();
-    const shown = items.slice(0, 2);
+    const shown = items.slice(0, 1);
     shown.forEach(ev => {
       const pill = document.createElement('div');
       pill.className = 'day-all-day-pill';
       const person = peopleById[ev.person];
-      pill.style.background = (person && person.color) || '#cbd5e1';
+      pill.style.setProperty('--pill', (person && person.color) || '#cbd5e1');
       pill.textContent = ev.title || 'Busy';
       pill.title = `${person ? person.name : 'Busy'}: ${ev.title || 'Busy'}`;
       el.appendChild(pill);
@@ -683,6 +689,21 @@ function init() {
     return formatLocalDate(d);
   }
 
+  function persistWeek(dateStr, events) {
+    try {
+      sessionStorage.setItem('calWeek:' + dateStr, JSON.stringify(events));
+    } catch (e) { /* private mode or quota */ }
+  }
+
+  function readStoredWeek(dateStr) {
+    try {
+      const parsed = JSON.parse(sessionStorage.getItem('calWeek:' + dateStr) || 'null');
+      return Array.isArray(parsed) ? parsed : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
   function loadWeek(dateStr) {
     if (weekCache.has(dateStr)) return Promise.resolve(weekCache.get(dateStr));
     const existing = weekLoads.get(dateStr);
@@ -695,6 +716,7 @@ function init() {
       .then(data => {
         const events = Array.isArray(data && data.events) ? data.events : [];
         weekCache.set(dateStr, events);
+        persistWeek(dateStr, events);
         return events;
       })
       .finally(() => {
@@ -726,10 +748,17 @@ function init() {
       return;
     }
 
-    // Cache miss: clear the previous week so stale items don't sit under new labels.
-    window.ALL_EVENTS = [];
-    if (typeof updateCalendar === 'function') updateCalendar();
-    if (weekEl) weekEl.classList.add('is-loading');
+    // A week saved from the last visit paints immediately. The request still
+    // runs, and replaces this copy when it returns. A true miss blanks first.
+    const stored = readStoredWeek(dateStr);
+    if (stored) {
+      window.ALL_EVENTS = stored;
+      if (typeof updateCalendar === 'function') updateCalendar();
+    } else {
+      window.ALL_EVENTS = [];
+      if (typeof updateCalendar === 'function') updateCalendar();
+      if (weekEl) weekEl.classList.add('is-loading');
+    }
 
     try {
       const events = await loadWeek(dateStr);
@@ -858,13 +887,18 @@ function init() {
     }
   });
 
-  // Initial Run. Seed the cache from the HTML payload so this week is free to revisit.
+  // The page only embeds events when the server cache is warm. Otherwise load
+  // them after paint, using the last session copy so the grid is not empty.
   updateView();
-  weekCache.set(
-    formatLocalDate(currentMonday),
-    Array.isArray(window.ALL_EVENTS) ? window.ALL_EVENTS.slice() : []
-  );
-  prefetchNeighbors(formatLocalDate(currentMonday));
+  const initialWeek = formatLocalDate(currentMonday);
+  if (window.EVENTS_INCLUDED) {
+    const embedded = Array.isArray(window.ALL_EVENTS) ? window.ALL_EVENTS.slice() : [];
+    weekCache.set(initialWeek, embedded);
+    persistWeek(initialWeek, embedded);
+    prefetchNeighbors(initialWeek);
+  } else {
+    fetchWeekEvents();
+  }
 })();
 
 /* =========================
