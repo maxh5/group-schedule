@@ -11,11 +11,9 @@ venv/
 .env.*
 !.env.example
 
-# SQLite databases
-#*.db
-
-# Flask
-#instance/
+# SQLite databases / local Flask instance data
+*.db
+instance/
 
 # OS
 .DS_Store
