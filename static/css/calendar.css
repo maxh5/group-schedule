@@ -1,5 +1,5 @@
 :root{
-    --col-gap: clamp(1px, 0.2vw, 6px);
+    --col-gap: 2px;
     --day-width: 150px;
     --workday-start: 8; /* hour */
     --workday-end: 20;  /* hour */
@@ -21,6 +21,11 @@
     --btn-hover-text: #0f172a;
     --time-select-border: #cbd5e1;
     --time-select-hover: #94a3b8;
+    --month-cell: rgba(255,255,255,0.72);
+    --month-cell-muted: rgba(241,245,249,0.62);
+    --month-lane-track: #e8edf3;
+    --month-grid-line: rgba(148,163,184,0.25);
+    --month-free: #10b981;
 }
 
 [data-theme="dark"] {
@@ -40,6 +45,11 @@
     --btn-hover-text: #e2e8f0;
     --time-select-border: #475569;
     --time-select-hover: #64748b;
+    --month-cell: rgba(15,23,42,0.55);
+    --month-cell-muted: rgba(15,23,42,0.3);
+    --month-lane-track: #273449;
+    --month-grid-line: rgba(148,163,184,0.18);
+    --month-free: #34d399;
 }
   .container{
     width: 100%;
@@ -79,6 +89,52 @@
   .title-group {
     flex: 0 0 auto;
     min-width: 200px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .calendar-view-toggle,
+  .mobile-view-toggle {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px;
+    border: 1px solid var(--border-color);
+    border-radius: 9px;
+    background: var(--hover-bg);
+  }
+
+  .calendar-view-option {
+    appearance: none;
+    border: 0;
+    border-radius: 6px;
+    padding: 5px 9px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .calendar-view-option .beta-tag {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    opacity: 0.75;
+  }
+
+  .calendar-view-option.is-active {
+    background: var(--active-bg);
+    color: var(--active-color);
+    box-shadow: 0 1px 2px var(--shadow);
+  }
+
+  .mobile-view-toggle {
+    display: none;
   }
 
   .current-status {
@@ -238,6 +294,10 @@
     position: relative;
   }
 
+  .week[hidden] {
+    display: none;
+  }
+
   /* Loading state while the API fetches a new week. Canvases dim and gently
      pulse to signal that data is being refreshed (Google Calendar fetches can
      take a few seconds). */
@@ -281,7 +341,7 @@
     
     background: var(--day-bg);
     border-radius:10px;
-    padding:10px;
+    padding: 8px 0 10px;
     box-sizing:border-box;
     position:relative;
     display: flex;
@@ -290,7 +350,7 @@
     overflow: hidden; /* Ensure content stays inside border radius */
     
     /* Default state */
-    border: 1px solid transparent;
+    border: 1px solid var(--border-color);
     transition: background 0.2s, border-color 0.2s;
   }
 
@@ -394,7 +454,7 @@
     font: inherit;
     font-size: 12px;
     font-weight: 600;
-    text-align: left;
+    text-align: center;
     cursor: pointer;
     width: 100%;
   }
@@ -416,11 +476,299 @@
     display: none;
   }
 
+  /* Month view: exact person lanes plus a group-density summary. */
+  .month-view {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .month-view[hidden] {
+    display: none;
+  }
+
+  .month-toolbar {
+    display: grid;
+    grid-template-columns: auto 1fr minmax(220px, 32%);
+    align-items: center;
+    gap: 12px;
+    min-height: 24px;
+    margin-bottom: 6px;
+    color: var(--muted);
+    font-size: 10px;
+  }
+
+  .month-density-key,
+  .month-density-key span,
+  .month-people-legend,
+  .month-person-key {
+    display: flex;
+    align-items: center;
+  }
+
+  .month-density-key {
+    gap: 9px;
+    white-space: nowrap;
+  }
+
+  .month-density-key span,
+  .month-person-key {
+    gap: 4px;
+  }
+
+  .month-density-key i {
+    display: block;
+    width: 16px;
+    height: 5px;
+    border-radius: 2px;
+  }
+
+  .month-key-free {
+    background: var(--month-free);
+  }
+
+  .month-key-busy {
+    background: linear-gradient(to right,
+      color-mix(in srgb, var(--active-color) 28%, var(--month-lane-track)),
+      color-mix(in srgb, var(--active-color) 92%, var(--month-lane-track))
+    );
+  }
+
+  .month-people-legend {
+    justify-content: center;
+    gap: 8px;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .month-person-key {
+    flex: 0 0 auto;
+    font-weight: 650;
+  }
+
+  .month-person-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--person-color);
+  }
+
+  .month-time-scale {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .month-time-scale span:first-child {
+    text-align: left;
+  }
+
+  .month-grid-frame {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--day-bg);
+  }
+
+  .month-weekdays,
+  .month-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+
+  .month-weekdays {
+    flex: 0 0 auto;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--container-bg);
+  }
+
+  .month-weekdays span {
+    padding: 6px;
+    color: var(--muted);
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.07em;
+    text-align: center;
+    text-transform: uppercase;
+  }
+
+  .month-grid {
+    flex: 1;
+    min-height: 0;
+    grid-template-rows: repeat(6, minmax(70px, 1fr));
+  }
+
+  .month-cell {
+    appearance: none;
+    min-width: 0;
+    min-height: 0;
+    padding: 5px 6px;
+    border: 0;
+    border-right: 1px solid var(--month-grid-line);
+    border-bottom: 1px solid var(--month-grid-line);
+    border-radius: 0;
+    background: var(--month-cell);
+    color: var(--text-color);
+    text-align: left;
+    overflow: hidden;
+    cursor: pointer;
+  }
+
+  .month-cell:nth-child(7n) {
+    border-right: 0;
+  }
+
+  .month-cell:nth-last-child(-n + 7) {
+    border-bottom: 0;
+  }
+
+  .month-cell:hover {
+    background: var(--hover-bg);
+  }
+
+  .month-cell.is-outside {
+    background: var(--month-cell-muted);
+    color: var(--muted);
+  }
+
+  .month-day-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
+    height: 16px;
+    margin-bottom: 4px;
+  }
+
+  .month-day-number {
+    position: relative;
+    font-size: 10px;
+    font-weight: 800;
+    line-height: 14px;
+  }
+
+  .month-cell.is-today .month-day-number::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -1px;
+    height: 2px;
+    border-radius: 2px;
+    background: var(--day-today-border);
+  }
+
+  .month-all-day-count {
+    max-width: 70%;
+    overflow: hidden;
+    color: #d97706;
+    font-size: 8px;
+    font-weight: 750;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  [data-theme="dark"] .month-all-day-count {
+    color: #fbbf24;
+  }
+
+  .month-lanes {
+    display: grid;
+    gap: 3px;
+  }
+
+  .month-lane {
+    display: grid;
+    grid-template-columns: 14px minmax(0, 1fr);
+    align-items: center;
+    gap: 3px;
+  }
+
+  .month-lane-label {
+    display: grid;
+    place-items: center;
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--person-color, var(--active-color)) 20%, transparent);
+    color: var(--person-color, var(--active-color));
+    font-size: 7px;
+    font-weight: 900;
+  }
+
+  .month-lane-track {
+    display: block;
+    position: relative;
+    height: 7px;
+    overflow: hidden;
+    border-radius: 2px;
+    background:
+      linear-gradient(to right, transparent calc(33.33% - .5px), var(--month-grid-line) 33.33%, transparent calc(33.33% + .5px)),
+      linear-gradient(to right, transparent calc(66.66% - .5px), var(--month-grid-line) 66.66%, transparent calc(66.66% + .5px)),
+      var(--month-lane-track);
+  }
+
+  .month-busy-segment,
+  .month-density-segment {
+    position: absolute;
+    inset-block: 0;
+    left: var(--segment-start);
+    width: var(--segment-width);
+    min-width: 1px;
+  }
+
+  .month-busy-segment {
+    border-radius: 2px;
+    background: var(--person-color);
+  }
+
+  .month-density-lane {
+    padding-bottom: 2px;
+    border-bottom: 1px solid var(--month-grid-line);
+  }
+
+  .month-density-lane .month-lane-label {
+    background: var(--active-bg);
+    color: var(--active-color);
+  }
+
+  .month-density-segment {
+    background: color-mix(in srgb,
+      var(--active-color) var(--density, 35%),
+      var(--month-lane-track)
+    );
+  }
+
+  .month-density-segment.is-free {
+    background: var(--month-free);
+  }
+
+  .month-more-people {
+    padding-left: 17px;
+    color: var(--muted);
+    font-size: 8px;
+    font-weight: 700;
+  }
+
+  .month-view.is-loading .month-grid {
+    animation: calendar-loading-pulse 1.2s ease-in-out infinite;
+  }
+
+  .month-mobile-hint {
+    display: none;
+  }
+
   canvas {
     width: 100% !important; /* Force CSS width control */
     height: 100%;
     display:block;
-    border-radius:6px;
+    border-radius: 0;
     box-shadow: inset 0 0 18px var(--canvas-shadow);
     cursor: crosshair;
     flex: 1;
@@ -503,7 +851,7 @@
     }
 
     .day {
-      padding: 6px;
+      padding: 6px 0 8px;
     }
 
     .day-label {
@@ -540,6 +888,86 @@
       border: 1px solid var(--border-color);
       border-radius: 16px;
       box-shadow: 0 2px 8px var(--shadow);
+    }
+
+    .mobile-view-toggle {
+      display: flex;
+      width: fit-content;
+      margin: 6px auto 0;
+    }
+
+    .month-view {
+      flex: 1;
+      min-height: 0;
+    }
+
+    .month-toolbar {
+      display: none;
+    }
+
+    .month-grid-frame {
+      flex: 1;
+      min-height: 0;
+    }
+
+    .month-weekdays span {
+      padding: 5px 1px;
+      font-size: 8px;
+      letter-spacing: 0;
+    }
+
+    .month-grid {
+      grid-template-rows: repeat(6, minmax(48px, 1fr));
+    }
+
+    .month-cell {
+      padding: 4px 3px;
+    }
+
+    .month-day-head {
+      height: 14px;
+      margin-bottom: 5px;
+    }
+
+    .month-day-number {
+      font-size: 9px;
+    }
+
+    .month-all-day-count {
+      width: 5px;
+      height: 5px;
+      padding: 0;
+      border-radius: 50%;
+      background: #f59e0b;
+      color: transparent;
+    }
+
+    .month-lane:not(.month-density-lane),
+    .month-more-people {
+      display: none;
+    }
+
+    .month-density-lane {
+      display: block;
+      padding: 0;
+      border: 0;
+    }
+
+    .month-density-lane .month-lane-label {
+      display: none;
+    }
+
+    .month-density-lane .month-lane-track {
+      width: 100%;
+      height: 9px;
+    }
+
+    .month-mobile-hint {
+      display: block;
+      padding-top: 5px;
+      color: var(--muted);
+      font-size: 9px;
+      text-align: center;
     }
 
     .mobile-ctx-btn {

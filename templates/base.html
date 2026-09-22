@@ -21,33 +21,48 @@
                 </div>
             </a>
         </div>
+
+        <a href="{{ url_for('index') }}" class="nav-item calendar-primary {% if active_page == 'calendar' %}active{% endif %}" title="Calendar" aria-label="Calendar">
+            <span class="icon">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+            </span>
+            <span class="label">Calendar</span>
+        </a>
         
         <nav class="sidebar-nav">
-            <a href="{{ url_for('index') }}" class="nav-item calendar-primary {% if active_page == 'calendar' %}active{% endif %}">
-                <span class="icon">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+            {% for g in nav_groups %}
+            <a href="{{ url_for('view_group', group_id=g.id) }}"
+               class="nav-item nav-group {% if active_group_id == g.id %}active{% endif %}"
+               data-group-id="{{ g.id }}"
+               title="{{ g.name }}"
+               aria-label="{{ g.name }}">
+                <span class="nav-group-avatar">
+                    <img src="{{ url_for('static', filename='profile_pics/' + g.profile_image) }}"
+                         alt=""
+                         onerror="this.src='https://ui-avatars.com/api/?name={{ g.name|urlencode }}&background=random'">
                 </span>
-                <span class="label">Calendar</span>
+                <span class="label">{{ g.name }}</span>
             </a>
-            
-            <div class="calendar-divider"></div>
-            
-            <a href="{{ url_for('groups') }}" class="nav-item {% if active_page == 'groups' %}active{% endif %}">
-                <span class="icon">
-                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
-                </span>
-                <span class="label">Groups</span>
-            </a>
+            {% endfor %}
 
-            <div class="nav-item placeholder" title="Coming soon">
+            {% if nav_pending_invites %}
+            <a href="{{ url_for('groups') }}" class="nav-item nav-invites {% if active_page == 'groups' and not active_group_id %}active{% endif %}" title="Pending invites" aria-label="Pending invites">
                 <span class="icon">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
                 </span>
-                <span class="label">Add Class</span>
-            </div>
+                <span class="nav-invite-badge">{{ nav_pending_invites }}</span>
+                <span class="label">Invites</span>
+            </a>
+            {% endif %}
         </nav>
 
         <div class="sidebar-footer">
+            <button type="button" class="nav-item nav-item-create" id="open-create-group" title="New group" aria-label="New group">
+                <span class="icon">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                </span>
+                <span class="label">New group</span>
+            </button>
             <a href="{{ url_for('calendar_settings') }}" class="nav-item {% if active_page == 'calendar_settings' %}active{% endif %}" aria-label="Calendar settings">
                 <span class="icon">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
@@ -93,36 +108,65 @@
     {% block right_sidebar %}{% endblock %}
 </div>
 
+{% if current_user.is_authenticated %}
+<dialog class="create-group-dialog" id="create-group-dialog">
+    <form method="post" action="{{ url_for('groups') }}" class="create-group-form">
+        <h2>New group</h2>
+        <input type="hidden" name="source" value="sidebar">
+        <input type="text" name="name" class="form-input" placeholder="Group name" required maxlength="100" autocomplete="off">
+        <input type="text" name="description" class="form-input" placeholder="Description (optional)" maxlength="255" autocomplete="off">
+        <div class="create-group-actions">
+            <button type="button" class="btn" data-close-dialog>Cancel</button>
+            <button type="submit" class="btn btn-primary">Create</button>
+        </div>
+    </form>
+</dialog>
+{% endif %}
+
 <script>
-    // Dark mode toggle functionality
     const themeToggle = document.getElementById('theme-toggle');
     const htmlElement = document.documentElement;
     
-    // Check for saved theme preference or default to light mode
     const currentTheme = localStorage.getItem('theme') || 'light';
     if (currentTheme === 'dark') {
         htmlElement.setAttribute('data-theme', 'dark');
-        themeToggle.checked = true;
+        if (themeToggle) themeToggle.checked = true;
     }
     
-    // Listen for toggle changes
-    themeToggle.addEventListener('change', function() {
-        if (this.checked) {
-            htmlElement.setAttribute('data-theme', 'dark');
-            localStorage.setItem('theme', 'dark');
-        } else {
-            htmlElement.removeAttribute('data-theme');
-            localStorage.setItem('theme', 'light');
-        }
-        
-        // Calendar colors are painted for the active theme.
-        if (typeof updateCalendar === 'function') {
-            updateCalendar();
-        }
-        if (window.updateCurrentTimeMarker) {
-            window.updateCurrentTimeMarker();
-        }
-    });
+    if (themeToggle) {
+        themeToggle.addEventListener('change', function() {
+            htmlElement.classList.add('theme-switching');
+            if (this.checked) {
+                htmlElement.setAttribute('data-theme', 'dark');
+                localStorage.setItem('theme', 'dark');
+            } else {
+                htmlElement.removeAttribute('data-theme');
+                localStorage.setItem('theme', 'light');
+            }
+            void htmlElement.offsetWidth;
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    htmlElement.classList.remove('theme-switching');
+                });
+            });
+            
+            if (typeof updateCalendar === 'function') {
+                updateCalendar();
+            }
+            if (window.updateCurrentTimeMarker) {
+                window.updateCurrentTimeMarker();
+            }
+        });
+    }
+
+    const createGroupDialog = document.getElementById('create-group-dialog');
+    const openCreateGroup = document.getElementById('open-create-group');
+    if (openCreateGroup && createGroupDialog) {
+        openCreateGroup.addEventListener('click', () => createGroupDialog.showModal());
+        createGroupDialog.querySelector('[data-close-dialog]')?.addEventListener('click', () => {
+            createGroupDialog.close();
+        });
+    }
 </script>
 
 </body>

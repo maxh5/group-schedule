@@ -104,7 +104,7 @@ def icloud_events_to_week_slots(
     week_end: dt.date,
     local_tz,
 ) -> List[Dict[str, Any]]:
-    """Convert caldav event resources to {day, start, end, title} dicts.
+    """Convert caldav events to {day, date, start, end, title} dicts.
 
     week_end is exclusive. All-day events are flagged all_day so the client can
     draw them in a strip instead of painting the whole work day.
@@ -158,6 +158,7 @@ def icloud_events_to_week_slots(
                     d1 = dt.datetime.combine(cur, dt.time(WORK_END_HOUR), tzinfo=local_tz)
                     out.append({
                         "day": cur.weekday(),
+                        "date": cur.isoformat(),
                         "start": d0.strftime("%H:%M"),
                         "end": d1.strftime("%H:%M"),
                         "title": title,
@@ -179,6 +180,7 @@ def icloud_events_to_week_slots(
             st, et = clipped
             out.append({
                 "day": d.weekday(),
+                "date": d.isoformat(),
                 "start": st,
                 "end": et,
                 "title": title,

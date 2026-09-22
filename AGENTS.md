@@ -31,10 +31,10 @@ This app helps **you and the people in your groups** see **one combined weekly v
 | **Multiple calendar accounts** (`/calendar-settings`) | **DONE** | A user can connect multiple Google accounts. Each connection stores a `UserOAuthToken` row. `UserLinkedCalendar` rows are scoped to the owning token. |
 | **iCloud calendar integration** | **DONE** | Connect via CalDAV at `https://caldav.icloud.com/` using an app-specific password (`UserOAuthToken` with `provider='apple'`, credential stored in `refresh_token`). Uses the `caldav` Python library; read-only. Implemented in [`extras/icloud_calendar.py`](extras/icloud_calendar.py). |
 | **Outlook / Microsoft Graph integration** | LATER | Microsoft OAuth + Graph API for `/me/calendars` and `/me/calendarview`. Slot in as a third `provider='microsoft'` analog to the Google flow. |
-| **Performance / caching** | IN PROGRESS | Provider fetches for a week run in parallel. `GET /` does **not** wait on Google: it embeds the week only when a server cache hit exists, otherwise the client calls `/api/events` after paint. The server keeps a **5-minute** cache keyed by `(viewer_id, week_start, related user ids)` because titles are redacted per viewer. The browser keeps a memory map for week-to-week nav and writes each week to `sessionStorage` (`calWeek:YYYY-MM-DD`) so coming back to the page paints the last copy immediately, then replaces it when the request returns. A monotonic `fetchToken` still drops a slow response if the user navigates again. The API date is formatted in **local time**. A true miss (no session copy) blanks the grid and adds `.is-loading`. |
-| **Mobile weekly view** | **DONE** | On viewports `<=767px` the grid becomes a 3-day rolling window driven by `CFG.mobileDayOffset` and a `.day.mobile-visible` class. Horizontal swipe on `#days` shifts the window by ±1 day; running off either end (offset `<0` or `>4`) auto-advances the week. The header collapses into a sticky **`mobile-context-strip`** (prev / date+status / next / gear) populated by `window.updateMobileContextHeader()`; the right sidebar becomes a slide-up settings sheet behind the gear button, with a backdrop, grab handle, and swipe-down-to-close. Tooltips become tap-to-pin and render as a bottom strip on touch. Sidebar nav labels are hidden on mobile (icon-only); the "Coming soon" placeholder is hidden too. `html, body { height: 100dvh; overflow: hidden }` prevents the calendar from spilling below the viewport. |
+| **Performance / caching** | IN PROGRESS | Provider fetches run in parallel. `GET /` does **not** wait on Google: it embeds the week only when a server cache hit exists, otherwise the client calls `/api/events` after paint. The server keeps viewer-scoped **5-minute** week and 42-day month caches because titles are redacted per viewer. Month view calls `/api/month-events` once for its entire grid, then splits the dated response into the same six Monday-keyed browser entries used by week view. The browser memory map and `sessionStorage` (`calWeek:YYYY-MM-DD`) make revisits immediate. A monotonic token still drops stale week/month renders. |
+| **Mobile weekly view** | **DONE** | On viewports `<=767px` the grid becomes a 3-day rolling window driven by `CFG.mobileDayOffset` and a `.day.mobile-visible` class. Horizontal swipe on `#days` shifts the window by ±1 day; running off either end (offset `<0` or `>4`) auto-advances the week. The header collapses into a sticky **`mobile-context-strip`** (prev / date+status / next / gear) populated by `window.updateMobileContextHeader()`; the right sidebar becomes a slide-up settings sheet behind the gear button, with a backdrop, grab handle, and swipe-down-to-close. Tooltips become tap-to-pin and render as a bottom strip on touch. The left sidebar is avatar + Calendar + group avatars + a plus to create a group (labels hidden). `html, body { height: 100dvh; overflow: hidden }` prevents the calendar from spilling below the viewport. |
 | **Weekly view defaults** | PARTIAL | **DONE**: weekends (Sat/Sun) are **always** shown — the Sat/Sun toggle and its CSS/JS hooks have been removed; the week is always Mon–Sun on both viewports. The "today" highlight is now a thin colored top border via a `.day.is-today::before` pseudo-element (no full-column tint, no extra padding on the day-label so the canvas stays aligned with the time column). **LATER**: column-gap tuning if still desired. |
-| **Monthly view** | PLANNED | Design decisions captured (see `.cursor/plans/`): single page with a `Week / Month` toggle (no reload, shared client cache); each day cell shows stacked color bars per visible person (length = fraction of their visible-day window they're busy), capped at 6 + "+N" pill; click a day cell jumps to weekly view at that day's Monday; on narrow viewports each cell collapses to day number + one combined busy bar. View preference persists in `localStorage`. Implementation depends on the per-week cache (see Performance / caching above). |
+| **Monthly view** | DONE | Lives on the calendar page behind a `Week / Month` toggle and uses the shared per-week cache. Each day shows a group busy-density timeline above up to five 8–8 person lanes (`+N` beyond that); on narrow viewports cells collapse to the density timeline and tap through to the weekly view. Month navigation fetches one 42-day provider range, and view preference persists in `localStorage`. |
 | **Add calendar items + SMS invite** | LATER | Allow a user to create an event (title, date/time, invitees from groups) and send an email-to-SMS gateway message asking each invitee to add it. Open questions: which SMS gateway(s)? opt-in / phone number collection flow? does the event write back to Google Calendar or stay app-local? |
 
 ---
@@ -63,7 +63,7 @@ This app helps **you and the people in your groups** see **one combined weekly v
 | Google Calendar HTTP (list, events, calendar metadata) | `extras/google_calendar.py` |
 | iCloud Calendar CalDAV (list, events, principal discovery) | `extras/icloud_calendar.py` |
 | Env var template (no secrets) | `.env.example` |
-| Layout + nav | `templates/base.html` |
+| Layout + left nav (profile, Calendar/Me, group avatars, new-group plus) | `templates/base.html` |
 | Weekly calendar page | `templates/calendar.html` |
 | Per-user calendar accounts (sync, visibility, multi-account) | `templates/calendar_settings.html` (`/calendar-settings`) |
 | Auth UI | `templates/login.html` (Google sign-in only), `templates/onboarding.html` (`/complete-profile` — choose @handle, names) |
@@ -109,11 +109,11 @@ This app helps **you and the people in your groups** see **one combined weekly v
 
 Same logic feeds the home calendar and `/api/events`. The server still loads that full set for the week. The client draws **one set at a time**, stored in `localStorage` key `calendarView`:
 
-- **Just you**
+- **Me**
 - **One group** (you and every accepted member)
 - **You and one member** of that group
 
-A missing saved group or member falls back to just you.
+A missing saved group or member falls back to Me. The **left sidebar** lists Calendar then each accepted group; clicking a group opens `/groups/<id>` (manage). Schedule switching stays in the right sidebar (Me / one group / you plus one member). A plus at the bottom of the left list opens a create-group dialog. Pending invites show a badge that links to `/groups`.
 
 ### Schedule data (today)
 
@@ -129,16 +129,17 @@ There is **no** generic "custom event" path outside Google + this class-derived 
 
 - **`/classes`**: POST adds enrollment; may call `fetch_class_by_section` / `parse_class_item` from `extras/api.py`.
 - **`/api`**: GET debug page; calls `fetch_class_by_section` when `?section=` is present — **not** protected by `@login_required`.
-- Templates: `templates/classes.html`, `templates/api.html`. The **Classes** nav link in `templates/base.html` has been **removed** so the legacy class flow is no longer reachable from the UI — the route still resolves at `/classes` if you visit it directly, consistent with the "keep code, hide from users" stance.
+- Templates: `templates/classes.html`, `templates/api.html`. The Classes and "Coming soon" nav items are gone; the left sidebar is Calendar plus groups. `/classes` still resolves if visited directly.
 
 ### Front-end contract (do not break silently)
 
-- `templates/calendar.html` inline script seeds `const ALL_PEOPLE` and `window.ALL_EVENTS` for the initial week from Flask. Subsequent week navigation refreshes `window.ALL_EVENTS` via the API.
-- Week navigation uses **`GET /api/events?week_start=YYYY-MM-DD`** (JSON). `week_start` **must be the local-time Monday** (formatted via `formatLocalDate` in `calendar.js`, not `toISOString().split('T')[0]`).
+- `templates/calendar.html` inline script seeds `const ALL_PEOPLE` and `window.ALL_EVENTS` for the initial week from Flask. Subsequent week and month navigation use the shared client cache.
+- Week navigation uses **`GET /api/events?week_start=YYYY-MM-DD`** (JSON). `week_start` **must be the local-time Monday** (formatted via `formatLocalDate` in `calendar.js`, not `toISOString().split('T')[0]`). Month navigation uses **`GET /api/month-events?month_start=YYYY-MM-01`**; its response includes `date` on every event and covers the Monday-through-Sunday 6x7 grid in one provider range query.
 
 Each event in the API response should match what `app.py` currently emits:
 
 - **`day`**: integer weekday, **0 = Monday … 6 = Sunday** (Python `date.weekday()`).
+- **`date`**: local calendar date as `"YYYY-MM-DD"`. Week view can derive placement from `day`; month view requires `date` because its response spans six weeks.
 - **`start`**, **`end`**: strings `"HH:MM"` (24h). Timed events keep their real local hours, including ones outside 8–8; an end at the next midnight is `"24:00"`. The week grid defaults to 8–8 and only draws the overlap with the selected window. All-day events still carry placeholder bounds (`08:00`–`20:00`) plus `all_day`.
 - **`person`**: integer `user_id`.
 - **`title`**: string.
@@ -149,9 +150,10 @@ Each event in the API response should match what `app.py` currently emits:
 ### Calendar JS state and exposed API
 
 - `CFG` (in `static/js/calendar.js`): per-day labels, work-hour window, dimensions, and `mobileDayOffset` (the start day of the 3-day mobile window, 0–4).
-- `window.ALL_EVENTS`, `window.VISIBLE_USER_IDS`, `window.CURRENT_USER_ID`, `window.currentWeekStart`: global state for the active week + filter context.
+- `window.ALL_EVENTS`, `window.VISIBLE_USER_IDS`, `window.CURRENT_USER_ID`, `window.currentWeekStart`, `window.currentMonthStart`, and `window.CALENDAR_DISPLAY_MODE`: global state for the active date + filter context. The display mode is stored in `localStorage` as `calendarDisplayMode`; the people set remains under `calendarView`.
 - `window.CalendarPrototype.redraw(events, people)`: imperative repaint entry point used by the inline `updateCalendar()` after filter changes or new event data arrives.
-- `window.calendarNav.{prev,next,today}`: viewport-aware navigation entry points used by both the desktop sidebar buttons and the mobile context strip. On desktop these jump by a full week; on mobile `prev`/`next` shift the 3-day window by one day and auto-advance the week at the edges.
+- `window.CalendarMonth.refresh()`: repaints the production month grid after the visible people or hour window changes. Desktop cells show group density plus up to five person lanes; mobile keeps the density lane and drills into week view when tapped.
+- `window.calendarNav.{prev,next,today}`: view-aware navigation used by both the desktop sidebar and mobile context strip. In month mode it moves by month; in week mode desktop moves by week and mobile shifts the 3-day window by one day.
 - `window.updateMobileContextHeader()`: refreshes the date label inside `mobile-context-strip` after any nav.
 - `window.hideCalendarTooltip()`: call before any view change to dismiss a tap-pinned mobile tooltip so it can't display stale content for a different week/day.
 - `fetchWeekEvents()` is race-safe via a monotonic `fetchToken`; stale in-flight responses are dropped if the user navigates again before they resolve. A per-week cache makes a week already loaded this session instant, and prefetches the neighboring weeks.

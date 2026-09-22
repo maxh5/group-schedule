@@ -81,6 +81,25 @@ from extras import icloud_calendar as icloud
 import models
 
 
+@app.context_processor
+def inject_sidebar_groups():
+    if not current_user.is_authenticated:
+        return {'nav_groups': [], 'nav_pending_invites': 0}
+    memberships = (
+        models.GroupMember.query
+        .filter_by(user_id=current_user.id, status='accepted')
+        .order_by(models.GroupMember.display_order)
+        .all()
+    )
+    pending = models.GroupMember.query.filter_by(
+        user_id=current_user.id, status='pending'
+    ).count()
+    return {
+        'nav_groups': [m.group for m in memberships],
+        'nav_pending_invites': pending,
+    }
+
+
 # ----- Helper Functions -----
 def get_user_color(user_id):
     """Generate consistent color for a user based on their ID."""
@@ -187,6 +206,8 @@ def _event_slot(slot, person_id, redact):
         'person': person_id,
         'title': 'Busy' if redact else slot['title'],
     }
+    if slot.get('date'):
+        item['date'] = slot['date']
     if slot.get('all_day'):
         item['all_day'] = True
     return item
@@ -262,6 +283,7 @@ def build_week_events_for_users(user_ids, week_start, week_end, viewer_id=None):
     for ev in db_events:
         out.append({
             'day': ev.start.weekday(),
+            'date': ev.start.date().isoformat(),
             'start': ev.start.strftime('%H:%M'),
             'end': ev.end.strftime('%H:%M'),
             'person': ev.user_id,
@@ -517,6 +539,7 @@ def _redirect_incomplete_profile():
 # Per-viewer week payloads. Titles are redacted for the viewer, so the key
 # cannot be shared across users. Repeat visits within the TTL skip Google.
 _WEEK_CACHE = {}
+_MONTH_CACHE = {}
 _WEEK_CACHE_LOCK = threading.Lock()
 _WEEK_CACHE_TTL_SEC = 300
 
@@ -553,6 +576,34 @@ def cached_week_events(user_ids, week_start, week_end, viewer_id):
             expired = [k for k, (exp, _) in _WEEK_CACHE.items() if exp <= now]
             for k in expired:
                 _WEEK_CACHE.pop(k, None)
+    return events
+
+
+def cached_month_events(user_ids, grid_start, grid_end, viewer_id):
+    """Fetch/cache the 42-day month grid as one provider range request."""
+    key = (
+        int(viewer_id or 0),
+        grid_start.isoformat(),
+        grid_end.isoformat(),
+        tuple(sorted(user_ids)),
+    )
+    now = time.monotonic()
+    with _WEEK_CACHE_LOCK:
+        hit = _MONTH_CACHE.get(key)
+        if hit and hit[0] > now:
+            return hit[1]
+
+    events, complete = build_week_events_for_users(
+        user_ids, grid_start, grid_end, viewer_id=viewer_id
+    )
+    if not complete:
+        return events
+    with _WEEK_CACHE_LOCK:
+        _MONTH_CACHE[key] = (time.monotonic() + _WEEK_CACHE_TTL_SEC, events)
+        if len(_MONTH_CACHE) > 50:
+            expired = [k for k, (exp, _) in _MONTH_CACHE.items() if exp <= now]
+            for expired_key in expired:
+                _MONTH_CACHE.pop(expired_key, None)
     return events
 
 
@@ -596,6 +647,7 @@ def index():
         active_page='calendar'
     )
 
+
 @app.route('/api', methods=['GET'])
 def api():
     section = request.args.get('section')
@@ -626,6 +678,30 @@ def get_events():
     )
 
     return jsonify({"events": events_data})
+
+
+@app.route('/api/month-events', methods=['GET'])
+@login_required
+def get_month_events():
+    """Fetch the six-week grid containing a month with one provider range query."""
+    month_start_str = request.args.get('month_start')
+    if not month_start_str:
+        return jsonify({"error": "month_start parameter required"}), 400
+    try:
+        month_start = datetime.strptime(month_start_str, '%Y-%m-%d').date().replace(day=1)
+    except ValueError:
+        return jsonify({"error": "Invalid date format. Use YYYY-MM-DD"}), 400
+
+    grid_start = month_start - timedelta(days=month_start.weekday())
+    grid_end = grid_start + timedelta(days=42)
+    all_related_user_ids, _ = get_related_user_ids(current_user.id)
+    events_data = cached_month_events(
+        all_related_user_ids, grid_start, grid_end, viewer_id=current_user.id
+    )
+    return jsonify({
+        "events": events_data,
+        "grid_start": grid_start.isoformat(),
+    })
 
 
 @app.route('/calendar-settings', methods=['GET', 'POST'])
@@ -1001,6 +1077,8 @@ def groups():
             db.session.add(membership)
             db.session.commit()
             flash("Group created!", "success")
+            if request.form.get('source') == 'sidebar':
+                return redirect(url_for('view_group', group_id=new_group.id))
         except Exception as e:
             db.session.rollback()
             flash("An error occurred while creating the group.", "danger")
@@ -1334,7 +1412,8 @@ def view_group(group_id):
         is_admin=is_admin,
         sorted_members=sorted_members,
         pending_invites=pending_invites,
-        active_page='groups'
+        active_page='groups',
+        active_group_id=group.id,
     )
 
 

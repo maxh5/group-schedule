@@ -30,6 +30,10 @@
     --input-border: #475569;
 }
 
+html.theme-switching *:not(.theme-switch):not(.theme-switch *) {
+    transition: none !important;
+}
+
 body {
     font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
     background: var(--bg);
@@ -174,30 +178,123 @@ body {
     cursor: not-allowed;
 }
 
+button.nav-item {
+    appearance: none;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    font: inherit;
+}
+
+.nav-group-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    overflow: hidden;
+    display: block;
+    flex-shrink: 0;
+    border: 2px solid transparent;
+    background: var(--hover-bg);
+}
+
+.nav-group-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.nav-item.nav-group {
+    padding: 4px;
+}
+
+.nav-item.nav-group.active {
+    background: transparent;
+    color: var(--active-color);
+    border-left: none;
+    padding-left: 4px;
+}
+
+.nav-item.nav-group.active .nav-group-avatar {
+    border-color: var(--active-color);
+}
+
+.nav-invites {
+    position: relative;
+}
+
+.nav-invite-badge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: #ef4444;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+
+.create-group-dialog {
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    padding: 0;
+    background: var(--card-bg);
+    color: var(--text-color);
+    width: min(360px, calc(100vw - 32px));
+    box-shadow: 0 16px 40px var(--shadow);
+}
+
+.create-group-dialog::backdrop {
+    background: rgba(15, 23, 42, 0.45);
+}
+
+.create-group-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 20px;
+}
+
+.create-group-form h2 {
+    margin: 0 0 4px;
+    font-size: 18px;
+}
+
+.create-group-form .form-input {
+    width: 100%;
+    flex: none;
+    box-sizing: border-box;
+}
+
+.create-group-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.create-group-actions .btn:not(.btn-primary) {
+    background: var(--hover-bg);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+}
+
 /* Calendar Prominence - Combination Approach */
 .nav-item.calendar-primary {
     position: relative;
     font-weight: 600;
+    flex-shrink: 0;
 }
 
 .nav-item.calendar-primary .icon svg {
     width: 24px;
     height: 24px;
-}
-
-/* Calendar Divider */
-.calendar-divider {
-    width: 1px;
-    height: 32px;
-    background: var(--border-color);
-    flex-shrink: 0;
-}
-
-@media (min-width: 768px) {
-    .calendar-divider {
-        width: 100%;
-        height: 1px;
-    }
 }
 
 .icon {
@@ -248,17 +345,14 @@ body {
         display: none;
     }
 
-    /* "Coming soon" placeholder hidden on mobile to keep the bar uncluttered */
-    .nav-item.placeholder {
-        display: none;
-    }
-
     /* Spread the icons evenly across the available horizontal space */
     .sidebar-nav {
-        overflow-x: visible;
+        overflow-x: auto;
         overflow-y: visible;
-        justify-content: space-around;
-        gap: 2px;
+        justify-content: flex-start;
+        gap: 4px;
+        flex: 1;
+        min-width: 0;
         scrollbar-width: none;
         -ms-overflow-style: none;
     }
@@ -292,6 +386,11 @@ body {
         height: 24px;
     }
 
+    .nav-group-avatar {
+        width: 36px;
+        height: 36px;
+    }
+
     .user-avatar {
         width: 40px;
         height: 40px;
@@ -314,7 +413,7 @@ body {
         border-radius: 24px; /* Fully rounded */
         align-items: center; /* Center items */
         padding: 24px 12px;
-        gap: 32px;
+        gap: 16px;
         border: 1px solid var(--border-color);
         /* border-left: none; Remove this to make it floating */
         flex-shrink: 0;
@@ -325,7 +424,7 @@ body {
 
     .sidebar-header {
         justify-content: center;
-        padding-bottom: 24px;
+        padding-bottom: 16px;
         border-bottom: 1px solid var(--border-color);
         width: 100%;
     }
@@ -347,7 +446,11 @@ body {
         flex: 1 1 auto;
         min-height: 0;
         width: 100%;
-        gap: 16px;
+        gap: 8px;
+    }
+
+    .nav-item-create {
+        margin-top: 0;
     }
 
     .sidebar-footer {
@@ -1091,6 +1194,7 @@ h1, h2 {
         align-items: center;
         gap: 8px;
         flex-shrink: 0;
+        width: auto;
         padding-top: 0;
         border-top: none;
         margin-top: 0;

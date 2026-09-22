@@ -164,7 +164,7 @@ def google_events_to_week_slots(
 ) -> List[Dict[str, Any]]:
     """
     week_end is exclusive (first day after the week), matching app week logic.
-    Output dicts: day (0 Mon .. 6 Sun), start/end HH:MM, title (str).
+    Output dicts: day (0 Mon .. 6 Sun), date (YYYY-MM-DD), start/end HH:MM, title.
     """
     out: List[Dict[str, Any]] = []
     days = (week_end - week_start).days
@@ -195,6 +195,7 @@ def google_events_to_week_slots(
                 out.append(
                     {
                         "day": d.weekday(),
+                        "date": d.isoformat(),
                         "start": st,
                         "end": et,
                         "title": summary,
@@ -210,6 +211,7 @@ def google_events_to_week_slots(
                     out.append(
                         {
                             "day": cur.weekday(),
+                            "date": cur.isoformat(),
                             "start": d0.strftime("%H:%M"),
                             "end": d1.strftime("%H:%M"),
                             "title": summary,
