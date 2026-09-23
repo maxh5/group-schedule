@@ -15,6 +15,10 @@ venv/
 *.db
 instance/
 
+# User/group uploaded profile images (keep folder via .gitkeep)
+static/profile_pics/*
+!static/profile_pics/.gitkeep
+
 # OS
 .DS_Store
 Thumbs.db
