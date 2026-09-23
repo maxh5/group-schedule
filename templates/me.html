@@ -5,7 +5,7 @@
 {% block content %}
 <div class="page-header">
     <h1 class="page-title">My Profile</h1>
-    <p class="page-subtitle">Manage your account settings and profile picture.</p>
+    <p class="page-subtitle">Manage your handle, name, and profile picture.</p>
 </div>
 
 {# Flash Messages #}
@@ -31,7 +31,38 @@
         <p style="margin: 8px 0 0; font-size: 13px; color: #94a3b8;">Signed in with Google · {{ current_user.email }}</p>
     </div>
 
-    <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 24px 0;">
+    <hr style="border: 0; border-top: 1px solid var(--border-color, #e2e8f0); margin: 24px 0;">
+
+    <h3 style="margin-top: 0; margin-bottom: 16px; font-size: 18px;">Profile details</h3>
+    <form method="post" style="display: flex; flex-direction: column; gap: 14px; text-align: left;">
+        <input type="hidden" name="form" value="profile">
+        <div>
+            <label for="handle" style="display: block; margin-bottom: 6px; font-weight: 500;">Handle</label>
+            <input type="text" id="handle" name="handle" class="form-input" required maxlength="30"
+                   value="{{ current_user.username or '' }}"
+                   placeholder="e.g. alex_c"
+                   autocomplete="username"
+                   autocapitalize="off"
+                   spellcheck="false"
+                   style="width: 100%; box-sizing: border-box;">
+            <p style="margin: 6px 0 0; font-size: 12px; color: var(--muted, #64748b);">3–30 lowercase characters: letters, numbers, and underscores. Shown as @handle.</p>
+        </div>
+        <div>
+            <label for="first_name" style="display: block; margin-bottom: 6px; font-weight: 500;">First name</label>
+            <input type="text" id="first_name" name="first_name" class="form-input" required maxlength="25"
+                   value="{{ current_user.first_name }}"
+                   style="width: 100%; box-sizing: border-box;">
+        </div>
+        <div>
+            <label for="last_name" style="display: block; margin-bottom: 6px; font-weight: 500;">Last name</label>
+            <input type="text" id="last_name" name="last_name" class="form-input" maxlength="50"
+                   value="{{ current_user.last_name }}"
+                   style="width: 100%; box-sizing: border-box;">
+        </div>
+        <button type="submit" class="btn btn-primary" style="align-self: flex-start;">Save profile</button>
+    </form>
+
+    <hr style="border: 0; border-top: 1px solid var(--border-color, #e2e8f0); margin: 24px 0;">
 
     <h3 style="margin-top: 0; margin-bottom: 16px; font-size: 18px;">Update Profile Picture</h3>
     

@@ -185,10 +185,32 @@ def _ensure_calendar_schema():
                     is_login_account=True,
                 ))
         db.session.commit()
+
+        # Force handles lowercase (one-time data fix for mixed-case usernames)
+        for u in models.User.query.filter(models.User.username.isnot(None)).all():
+            lower = u.username.lower()
+            if lower == u.username:
+                continue
+            clash = models.User.query.filter(
+                models.User.username == lower, models.User.id != u.id
+            ).first()
+            if clash:
+                app.logger.warning(
+                    'Skip lowercase handle for user_id=%s (%r → %r): already taken',
+                    u.id, u.username, lower,
+                )
+                continue
+            u.username = lower
+        db.session.commit()
     except Exception:
         app.logger.exception('Calendar schema migration failed')
         db.session.rollback()
     app._calendar_schema_ensured = True
+
+
+def _normalize_handle(raw):
+    """Strip whitespace/@ and force lowercase. Empty string if nothing left."""
+    return (raw or '').strip().lstrip('@').lower()
 
 
 def _local_tzinfo():
@@ -1184,7 +1206,7 @@ def invite_member(group_id):
         flash("Unauthorized.", "danger")
         return redirect(url_for("groups"))
 
-    handle = (request.form.get("handle") or request.form.get("username") or "").strip().lstrip("@")
+    handle = _normalize_handle(request.form.get("handle") or request.form.get("username"))
     if not handle:
         flash("Please enter a handle.", "danger")
         return redirect(url_for("view_group", group_id=group_id))
@@ -1615,15 +1637,15 @@ def complete_profile():
         return redirect(url_for('index'))
 
     if request.method == 'POST':
-        handle = (request.form.get('handle') or '').strip().lstrip('@')
+        handle = _normalize_handle(request.form.get('handle'))
         first_name = (request.form.get('first_name') or '').strip()[:25]
         last_name = (request.form.get('last_name') or '').strip()[:50]
 
         if not first_name:
             flash("First name is required.", "danger")
             return render_template('onboarding.html')
-        if not re.match(r'^[a-zA-Z0-9_]{3,30}$', handle):
-            flash("Handle must be 3–30 characters: letters, numbers, and underscores only.", "danger")
+        if not re.match(r'^[a-z0-9_]{3,30}$', handle):
+            flash("Handle must be 3–30 lowercase characters: letters, numbers, and underscores only.", "danger")
             return render_template('onboarding.html')
 
         if models.User.query.filter(models.User.username == handle, models.User.id != current_user.id).first():
@@ -1654,6 +1676,35 @@ def register():
 @login_required
 def me():
     if request.method == 'POST':
+        if request.form.get('form') == 'profile':
+            handle = _normalize_handle(request.form.get('handle'))
+            first_name = (request.form.get('first_name') or '').strip()[:25]
+            last_name = (request.form.get('last_name') or '').strip()[:50]
+
+            if not first_name:
+                flash("First name is required.", "danger")
+                return redirect(url_for('me'))
+            if not re.match(r'^[a-z0-9_]{3,30}$', handle):
+                flash("Handle must be 3–30 lowercase characters: letters, numbers, and underscores only.", "danger")
+                return redirect(url_for('me'))
+            if models.User.query.filter(
+                models.User.username == handle, models.User.id != current_user.id
+            ).first():
+                flash("That handle is already taken.", "danger")
+                return redirect(url_for('me'))
+
+            current_user.username = handle
+            current_user.first_name = first_name
+            current_user.last_name = last_name
+            try:
+                db.session.commit()
+                flash("Profile updated.", "success")
+            except IntegrityError:
+                db.session.rollback()
+                db.session.refresh(current_user)
+                flash("That handle is already taken.", "danger")
+            return redirect(url_for('me'))
+
         if 'profile_pic' in request.files:
             file = request.files['profile_pic']
             if file.filename:

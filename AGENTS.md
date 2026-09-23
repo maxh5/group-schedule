@@ -94,7 +94,7 @@ This app helps **you and the people in your groups** see **one combined weekly v
 
 ### Social discovery (handles)
 
-- **Group invites** (`POST /groups/invite/<id>`): form field **`handle`** (backwards-compatible with **`username`** in `app.py`). Display and flash copy refer to **@handle**; the DB column remains **`users.username`**.
+- **Group invites** (`POST /groups/invite/<id>`): form field **`handle`** (backwards-compatible with **`username`** in `app.py`). Display and flash copy refer to **@handle**; the DB column remains **`users.username`**. Handles are **forced lowercase** on save (`_normalize_handle`); `_ensure_calendar_schema` also lowercases any existing mixed-case rows on startup.
 
 ### Social graph
 

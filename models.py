@@ -11,7 +11,7 @@ class User(db.Model, UserMixin):
     first_name = db.Column(db.String(25), nullable=False)
     last_name = db.Column(db.String(50), nullable=False)
 
-    # Public @handle for group discovery (set after Google sign-in onboarding)
+    # Public @handle for group discovery (set after Google sign-in onboarding; always lowercase)
     username = db.Column(db.String(30), unique=True, nullable=True)
     profile_image = db.Column(db.String(255), nullable=False, default='default.jpg')
 
