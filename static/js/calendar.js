@@ -90,7 +90,6 @@ CFG.days.forEach((d, idx) => {
   dayEl.setAttribute('data-day', idx);
   dayEl.innerHTML = `
     <div class="day-label">${d}</div>
-    <div class="day-all-day" data-day="${idx}" aria-label="${d} all-day events"></div>
     <canvas id="canvas-${idx}" width="${CFG.dayWidth}" height="${CFG.canvasHeightPx}" aria-label="${d} availability canvas"></canvas>
   `;
   daysEl.appendChild(dayEl);
@@ -144,7 +143,8 @@ function rebuildTimeColumn() {
     timeEl.style.textAlign = isMobile ? 'left' : 'right';
     timeEl.style.paddingLeft = isMobile ? '2px' : '0';
     timeEl.style.paddingRight = isMobile ? '0' : '6px';
-    timeEl.style.transform = 'translateY(-50%)';
+    // End hour sits on the canvas bottom edge; keep the label fully above it.
+    timeEl.style.transform = hour === CFG.workEndHour ? 'translateY(-100%)' : 'translateY(-50%)';
 
     timeColumnEl.appendChild(timeEl);
   }
@@ -484,41 +484,6 @@ document.querySelectorAll('canvas').forEach((c, idx) => {
   c.addEventListener('blur', hideTooltip);
 });
 
-/* All-day events sit in a one-line strip. Every column keeps the strip when
-   the week has any, so the canvases stay aligned with the time gutter. */
-function renderAllDayStrips() {
-  const visibleIds = window.VISIBLE_USER_IDS || new Set();
-  const strips = document.querySelectorAll('.day-all-day');
-  let any = false;
-  strips.forEach((el, dayIndex) => {
-    const items = (eventsByDay[dayIndex] || []).filter(e => e.allDay && visibleIds.has(e.person));
-    if (items.length) any = true;
-    el.replaceChildren();
-    const shown = items.slice(0, 1);
-    shown.forEach(ev => {
-      const pill = document.createElement('div');
-      pill.className = 'day-all-day-pill';
-      const person = peopleById[ev.person];
-      pill.style.setProperty('--pill', (person && person.color) || '#cbd5e1');
-      pill.textContent = ev.title || 'Busy';
-      pill.title = `${person ? person.name : 'Busy'}: ${ev.title || 'Busy'}`;
-      el.appendChild(pill);
-    });
-    if (items.length > shown.length) {
-      const more = document.createElement('div');
-      more.className = 'day-all-day-pill day-all-day-more';
-      more.textContent = `+${items.length - shown.length}`;
-      more.title = items.slice(shown.length).map(ev => ev.title || 'Busy').join('\n');
-      el.appendChild(more);
-    }
-  });
-  const daysEl = document.getElementById('days');
-  if (daysEl) daysEl.classList.toggle('has-all-day', any);
-  if (typeof window.fitCalendarCanvases === 'function') {
-    requestAnimationFrame(() => window.fitCalendarCanvases());
-  }
-}
-
 /* Expose a small imperative API to update events from server */
 function redraw(newEvents, people){
   // Update global config
@@ -542,7 +507,6 @@ function redraw(newEvents, people){
         allDay: !!ev.all_day
       });
     });
-    renderAllDayStrips();
     // redraw canvases
     for(let d=0; d<CFG.days.length; d++){
       perDayMinuteMaps[d] = drawDayGradient(d);

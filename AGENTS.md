@@ -143,7 +143,7 @@ Each event in the API response should match what `app.py` currently emits:
 - **`start`**, **`end`**: strings `"HH:MM"` (24h). Timed events keep their real local hours, including ones outside 8–8; an end at the next midnight is `"24:00"`. The week grid defaults to 8–8 and only draws the overlap with the selected window. All-day events still carry placeholder bounds (`08:00`–`20:00`) plus `all_day`.
 - **`person`**: integer `user_id`.
 - **`title`**: string.
-- **`all_day`**: `true` on all-day Google and iCloud events only. Omitted on timed events. The week grid draws these in a strip above the canvas and does not paint them into the hourly gradient. Intensity on the canvas counts **distinct people** per minute, so two overlapping events from one person stay one shade.
+- **`all_day`**: `true` on all-day Google and iCloud events only. Omitted on timed events. The week grid does not show these (no top strip, not painted into the hourly gradient). Month view can still surface an all-day count. Intensity on the canvas counts **distinct people** per minute, so two overlapping events from one person stay one shade.
 
 `static/js/calendar.js` builds busy gradients from this shape. If the backend changes shape or semantics, update the JS and this document together.
 

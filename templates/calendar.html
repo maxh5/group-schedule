@@ -53,7 +53,11 @@
     <div class="week" id="week-view">
       <div class="time-column" id="time-column"></div>
       <div class="days" id="days"></div>
-      <div id="current-time-marker" style="display: none;"></div>
+      <div id="current-time-marker" class="current-time-marker" hidden>
+        <span class="current-time-marker-dot" aria-hidden="true"></span>
+        <span class="current-time-marker-line" aria-hidden="true"></span>
+        <span class="current-time-marker-label"></span>
+      </div>
     </div>
 
     <section class="month-view" id="month-view" aria-label="Monthly availability" hidden>
@@ -201,123 +205,80 @@
   // Update current time marker position
   window.updateCurrentTimeMarker = function() {
       const marker = document.getElementById('current-time-marker');
-      if (!marker) {
-          console.log('Marker element not found');
-          return;
-      }
+      const labelEl = marker && marker.querySelector('.current-time-marker-label');
+      if (!marker || !labelEl) return;
       if (window.CALENDAR_DISPLAY_MODE === 'month') {
-          marker.style.display = 'none';
+          marker.hidden = true;
           return;
       }
-      
+
       const now = new Date();
       const currentDay = now.getDay(); // 0 = Sunday, 1 = Monday, etc.
       const currentHour = now.getHours();
       const currentMinute = now.getMinutes();
       const currentTimeInMinutes = currentHour * 60 + currentMinute;
-      
-      console.log('Current time:', currentHour + ':' + currentMinute, 'Day:', currentDay);
-      
-      // Calculate which day column (Mon=0, Tue=1, ..., Sun=6)
-      let dayIndex = currentDay - 1; // Convert Sunday=0 to Mon=0 system
-      if (dayIndex === -1) dayIndex = 6; // Sunday becomes index 6
-      
-      console.log('Day index:', dayIndex);
-      
-      // Check if current day is visible
+
+      // Mon=0 … Sun=6
+      let dayIndex = currentDay - 1;
+      if (dayIndex === -1) dayIndex = 6;
+
       const weekContainer = document.querySelector('.week');
       const dayElement = document.querySelector(`.day[data-day="${dayIndex}"]`);
-      
-      console.log('Week container:', weekContainer);
-      console.log('Day element:', dayElement);
-      
       if (!dayElement || !weekContainer) {
-          console.log('Day element or week container not found');
-          marker.style.display = 'none';
+          marker.hidden = true;
           return;
       }
-      
-      // Check if we're viewing the current week
-      // The week loads data from window.currentWeekStart if available
+      // Mobile 3-day window: only show when today's column is visible.
+      if (window.isMobileViewport && window.isMobileViewport() &&
+          !dayElement.classList.contains('mobile-visible')) {
+          marker.hidden = true;
+          return;
+      }
+
       let isCurrentWeek = true;
       if (window.currentWeekStart) {
           const weekStart = new Date(window.currentWeekStart);
           const weekEnd = new Date(weekStart);
           weekEnd.setDate(weekStart.getDate() + 6);
-          
-          // Check if today falls within the week range
           const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-          isCurrentWeek = today >= new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate()) && 
+          isCurrentWeek = today >= new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate()) &&
                          today <= new Date(weekEnd.getFullYear(), weekEnd.getMonth(), weekEnd.getDate());
-          console.log('Week start:', weekStart, 'Week end:', weekEnd, 'Today:', today, 'Is current week:', isCurrentWeek);
-      } else {
-          console.log('No currentWeekStart found, assuming current week');
       }
-      
       if (!isCurrentWeek) {
-          console.log('Not viewing current week');
-          marker.style.display = 'none';
+          marker.hidden = true;
           return;
       }
-      
-      // Calculate vertical position based on time
-      // Use dynamic CFG values that update when time selectors change
+
       const workStartMin = (window.CFG?.workStartHour || 8) * 60;
       const workEndMin = (window.CFG?.workEndHour || 20) * 60;
-      
       if (currentTimeInMinutes < workStartMin || currentTimeInMinutes >= workEndMin) {
-          console.log('Outside work hours');
-          marker.style.display = 'none';
+          marker.hidden = true;
           return;
       }
-      
+
       const totalWorkMinutes = workEndMin - workStartMin;
       const minutesIntoWorkday = currentTimeInMinutes - workStartMin;
       const fraction = minutesIntoWorkday / totalWorkMinutes;
-      
-      // Same measurement the hour labels use, so the line stays on the canvas
-      // after the all-day strip changes the column header height.
       const HEADER_OFFSET = (typeof getCanvasTopOffset === 'function') ? getCanvasTopOffset() : 38;
       const canvasHeight = window.CFG?.canvasHeightPx || 720;
       const topPosition = HEADER_OFFSET + (fraction * canvasHeight);
-      
-      // Get day column position
+
       const dayRect = dayElement.getBoundingClientRect();
       const weekRect = weekContainer.getBoundingClientRect();
-      const leftOffset = dayRect.left - weekRect.left;
-      const dayWidth = dayRect.width;
-      
-      console.log('Positioning marker at:', {leftOffset, topPosition, dayWidth});
-      
-      // Format current time for display
+      // Inset by the day border so the line/triangle sit inside the column, not on/over it.
+      const borderLeft = parseFloat(getComputedStyle(dayElement).borderLeftWidth) || 1;
+      const borderRight = parseFloat(getComputedStyle(dayElement).borderRightWidth) || 1;
+      const leftOffset = dayRect.left - weekRect.left + borderLeft;
+      const dayWidth = Math.max(0, dayRect.width - borderLeft - borderRight);
+
       const displayHours = currentHour % 12 || 12;
       const ampm = currentHour >= 12 ? 'PM' : 'AM';
-      const timeString = `${displayHours}:${String(currentMinute).padStart(2, '0')} ${ampm}`;
-      
-      // Style the marker - always use blue color
-      const markerColor = '#60a5fa';
-      const isDarkMode = document.documentElement.getAttribute('data-theme') === 'dark';
-      const textShadow = isDarkMode ? '0 0 3px #0f172a, 0 0 3px #0f172a, 0 0 3px #0f172a' : '0 0 3px white, 0 0 3px white, 0 0 3px white';
-      
-      marker.style.display = 'block';
-      marker.style.position = 'absolute';
+      labelEl.textContent = `${displayHours}:${String(currentMinute).padStart(2, '0')} ${ampm}`;
+
+      marker.hidden = false;
       marker.style.left = leftOffset + 'px';
       marker.style.width = dayWidth + 'px';
       marker.style.top = topPosition + 'px';
-      marker.style.height = '2px';
-      marker.style.backgroundColor = markerColor;
-      marker.style.boxShadow = '0 1px 2px rgba(96, 165, 250, 0.5)';
-      marker.style.opacity = '0.8';
-      marker.style.zIndex = '100';
-      marker.style.pointerEvents = 'none';
-      
-      // Add a custom CSS arrow at the start and time label
-      marker.innerHTML = `
-        <div style="position: absolute; left: 0px; top: -5px; width: 0; height: 0; border-top: 6px solid transparent; border-bottom: 6px solid transparent; border-left: 8px solid ${markerColor};"></div>
-        <div style="position: absolute; left: 12px; top: -13px; color: ${markerColor}; font-size: 11px; font-weight: 700; white-space: nowrap; text-shadow: ${textShadow};">${timeString}</div>
-      `;
-      
-      console.log('Marker should now be visible');
   }
 
   // Attach listeners after DOM load

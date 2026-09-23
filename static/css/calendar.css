@@ -341,7 +341,7 @@
     
     background: var(--day-bg);
     border-radius:10px;
-    padding: 8px 0 10px;
+    padding: 8px 0 0;
     box-sizing:border-box;
     position:relative;
     display: flex;
@@ -383,49 +383,6 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis; /* Handle small widths gracefully */
-  }
-
-  .day-all-day {
-    display: none;
-    flex: 0 0 auto;
-    height: 20px;
-    margin: 0 0 6px;
-    gap: 3px;
-    overflow: hidden;
-    align-items: center;
-  }
-
-  .days.has-all-day .day-all-day {
-    display: flex;
-  }
-
-  .day-all-day-pill {
-    flex: 1 1 0;
-    min-width: 0;
-    height: 18px;
-    line-height: 18px;
-    padding: 0 6px;
-    border-radius: 4px;
-    font-size: 11px;
-    font-weight: 600;
-    color: #111;
-    background: var(--pill, #cbd5e1);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-
-  [data-theme="dark"] .day-all-day-pill {
-    background: color-mix(in srgb, var(--pill, #94a3b8) 32%, #1e293b);
-    color: #f8fafc;
-    box-shadow: inset 3px 0 0 var(--pill, #94a3b8);
-  }
-
-  .day-all-day-more {
-    flex: 0 0 auto;
-    background: var(--hover-bg);
-    color: var(--text-color);
-    box-shadow: none;
   }
 
   .calendar-sets {
@@ -775,6 +732,62 @@
     min-height: 0;
   }
 
+  /* Current-time indicator across today's column */
+  .current-time-marker {
+    position: absolute;
+    height: 2px;
+    z-index: 100;
+    pointer-events: none;
+    background: var(--now, #f43f5e);
+    box-shadow: 0 1px 2px color-mix(in srgb, var(--now, #f43f5e) 50%, transparent);
+    --now: #f43f5e;
+  }
+
+  .current-time-marker[hidden] {
+    display: none !important;
+  }
+
+  .current-time-marker-line {
+    display: none;
+  }
+
+  .current-time-marker-dot {
+    position: absolute;
+    left: 0;
+    top: -5px;
+    width: 0;
+    height: 0;
+    border-top: 6px solid transparent;
+    border-bottom: 6px solid transparent;
+    border-left: 8px solid var(--now);
+    background: transparent;
+    box-shadow: none;
+    transform: none;
+    z-index: 1;
+  }
+
+  .current-time-marker-label {
+    position: absolute;
+    left: 12px;
+    top: -11px;
+    transform: none;
+    padding: 0;
+    border-radius: 0;
+    background: transparent;
+    color: var(--now);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0;
+    line-height: 1;
+    white-space: nowrap;
+    text-shadow:
+      0 0 3px var(--container-bg),
+      0 0 3px var(--container-bg),
+      0 0 3px var(--container-bg);
+    box-shadow: none;
+    z-index: 2;
+  }
+
   .tooltip {
     position:fixed;
     pointer-events:none;
@@ -851,23 +864,12 @@
     }
 
     .day {
-      padding: 6px 0 8px;
+      padding: 6px 0 0;
     }
 
     .day-label {
       font-size: 13px;
       margin-bottom: 4px;
-    }
-
-    .day-all-day {
-      height: 18px;
-      margin-bottom: 4px;
-    }
-
-    .day-all-day-pill {
-      font-size: 10px;
-      height: 16px;
-      line-height: 16px;
     }
 
     .header {
