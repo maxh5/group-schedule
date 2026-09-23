@@ -161,7 +161,7 @@ let eventsByDay = {};
 
 /* Canvas draw: for each day draw a smooth vertical gradient
    where intensity = number of distinct people busy that minute.
-   The current user is blue; everyone else is green.
+   The current user is blue; everyone else is amber.
    All-day events are drawn in the strip above the canvas, not here.
 */
 function drawDayGradient(dayIndex){
@@ -225,12 +225,12 @@ function drawDayGradient(dayIndex){
 
   const darkTheme = document.documentElement.getAttribute('data-theme') === 'dark';
 
-  // Color mapping: blue for user, green for others.
+  // Color mapping: blue for user, amber for others.
   // Free minutes stay transparent in dark mode so they match the column
-  // instead of a light-green wash that reads as a gray band.
+  // instead of a light wash that reads as a gray band.
   function getColorForMinute(userC, otherC){
     if (userC === 0 && otherC === 0) {
-      return darkTheme ? [15, 23, 42, 0] : [240, 255, 240, 40];
+      return darkTheme ? [15, 23, 42, 0] : [248, 250, 252, 40];
     }
     
     // Calculate combined count and intensity relative to the day's maximum
@@ -247,10 +247,10 @@ function drawDayGradient(dayIndex){
       const a = Math.round(40 + (180 - 40) * t);
       return [r,g,b,a];
     } else {
-      // Only others busy - green gradient
-      const r = Math.round(240 + (0 - 240) * t);
-      const g = Math.round(255 + (100 - 255) * t);
-      const b = Math.round(240 + (0 - 240) * t);
+      // Only others busy - amber gradient (#fffbeb → #d97706)
+      const r = Math.round(255 + (217 - 255) * t);
+      const g = Math.round(251 + (119 - 251) * t);
+      const b = Math.round(235 + (6 - 235) * t);
       const a = Math.round(40 + (180 - 40) * t);
       return [r,g,b,a];
     }
